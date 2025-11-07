@@ -137,9 +137,9 @@ def convert_and_round(val, name):
     if name in ("sp","msl","pres"):
         return float(np.round(val / 100.0, 1))
     if name in ("prate",):
-        return float(np.round(val * 3600.0 * 3.0, 2))
+        return float(np.round(val * 3600.0 * 3.0, 1))
     if name in ("apcp",):
-        return float(np.round(val, 2))
+        return float(np.round(val, 1))
     if name in ("tcc","lcc","mcc","hcc","r2"):
         v = float(val)
         if v > 1.5 and v < 100:
