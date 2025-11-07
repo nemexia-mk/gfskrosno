@@ -612,7 +612,7 @@ def upload_to_ftp(files_to_send):
     try:
         from ftplib import FTP, error_perm
         ftp = FTP(host, user, passwd, timeout=30)
-        ftp.cwd("/")
+        ftp.cwd("/stacja.meteo-krosno.pl/")
         for path in files_to_send:
             if not os.path.exists(path):
                 continue
