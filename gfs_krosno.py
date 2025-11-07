@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 # gfs_krosno.py
 # Pobiera GFS, generuje Excel + meteorogram 120h + daily PNG; retry co 10 min jeśli brakuje plików; wysyła wyniki na FTP (credentials z .env)
-
 import os
 import requests
 import xarray as xr
@@ -13,13 +12,11 @@ from matplotlib.dates import DateFormatter
 from time import sleep
 from dotenv import load_dotenv
 from ftplib import FTP, error_perm
-
 # -----------------------
 # CONFIG
 # -----------------------
 OUTPUT_DIR = "gfs_krosno_full"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-
 # Krosno
 TOP_LAT = 50.0
 BOTTOM_LAT = 49.4
@@ -27,17 +24,14 @@ LEFT_LON = 21.3
 RIGHT_LON = 22.01
 KROSNO_LAT = 49.69
 KROSNO_LON = 21.77
-
 # GFS cycle selection (dynamic based on UTC now)
 now = datetime.utcnow()
 RUN_DATE = now.strftime("%Y%m%d")
-
 # time cutoffs (UTC) for selecting run hour (matches Twoja logika)
 t_0120 = time(1, 20)
 t_0520 = time(5, 20)
 t_1120 = time(11, 20)
 t_1720 = time(17, 20)
-
 if t_0120 <= now.time() < t_0520:
     RUN_HOUR = "18"
 elif t_0520 <= now.time() < t_1120:
@@ -46,18 +40,13 @@ elif t_1120 <= now.time() < t_1720:
     RUN_HOUR = "06"
 else:
     RUN_HOUR = "12"
-
 CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
-
 BASE_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-
-FORECAST_HOURS = list(range(0, 385, 3))  # pełny zakres; wykres będzie ograniczony do 120h
-
+FORECAST_HOURS = list(range(0, 385, 3)) # pełny zakres; wykres będzie ograniczony do 120h
 # Retry policy
-RETRY_INTERVAL_SECONDS = 10 * 60   # 10 minut
-MAX_RETRIES = 12                    # domyślnie spróbuj 12 razy (2 godziny); ustaw None aby próbować w nieskończoność
-
+RETRY_INTERVAL_SECONDS = 10 * 60 # 10 minut
+MAX_RETRIES = 12 # domyślnie spróbuj 12 razy (2 godziny); ustaw None aby próbować w nieskończoność
 # Static NOMADS filter
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on"
@@ -97,14 +86,12 @@ STATIC_MIDDLE = (
     f"&leftlon={LEFT_LON}"
     f"&rightlon={RIGHT_LON}"
 )
-
 # -----------------------
 # HELPERS (same jak wcześniej)
 # -----------------------
 def build_url(file_name):
     url = f"{BASE_URL}?file={file_name}&dir=/{CYCLE_DIR}{STATIC_MIDDLE}"
     return url.replace("suubregion", "subregion").replace("lev_entire_atmoosphere", "lev_entire_atmosphere")
-
 SHORTNAMES = {
     "t2m": ["t2m", "2t", "tmp2m", "tmp"],
     "d2m": ["d2m", "dew2m", "dpt"],
@@ -126,13 +113,11 @@ SHORTNAMES = {
     "u10": ["ugrd", "u10"],
     "v10": ["vgrd", "v10"]
 }
-
 def try_open_by_filter(file_path, filter_by_keys):
     try:
         return xr.open_dataset(file_path, engine="cfgrib", backend_kwargs={"filter_by_keys": filter_by_keys, "indexpath": ""})
     except Exception:
         return None
-
 def safe_get_point(ds, shortname_list):
     if ds is None:
         return np.nan
@@ -144,7 +129,6 @@ def safe_get_point(ds, shortname_list):
             except Exception:
                 continue
     return np.nan
-
 def convert_and_round(val, name):
     if val is None or (isinstance(val, float) and np.isnan(val)):
         return np.nan
@@ -170,7 +154,6 @@ def convert_and_round(val, name):
     if name in ("weasd",):
         return float(np.round(val * 10, 1))
     return float(np.round(val, 2))
-
 def lcl_height_m(t_c, td_c):
     if np.isnan(t_c) or np.isnan(td_c):
         return np.nan
@@ -178,7 +161,6 @@ def lcl_height_m(t_c, td_c):
     if diff < 0:
         diff = 0.0
     return float(np.round(125.0 * diff, 1))
-
 def detect_precip_type(prate, t2m_c, t850_c):
     if prate is None or (isinstance(prate, float) and np.isnan(prate)) or prate <= 0:
         return "Brak"
@@ -195,7 +177,6 @@ def detect_precip_type(prate, t2m_c, t850_c):
             return "Deszcz"
     except Exception:
         return "Brak"
-
 def storm_risk_category(cape, li):
     if np.isnan(cape) and np.isnan(li):
         return "Brak"
@@ -220,7 +201,6 @@ def storm_risk_category(cape, li):
             elif cat == "Średnie": cat = "Wysokie"
             elif cat == "WysOKie": cat = "Ekstremalne"
     return cat
-
 # color map for Excel - minimal set
 PREC_TYPE_TO_COLOR = {
     "Deszcz": "#0FB00F",
@@ -228,7 +208,6 @@ PREC_TYPE_TO_COLOR = {
     "Deszcz ze śniegiem": "#00FFBB",
     "Deszcz marznący": "#FFA500",
 }
-
 # -----------------------
 # DOWNLOAD with RETRY logic
 # -----------------------
@@ -237,14 +216,12 @@ def download_missing_gribs(forecast_hours, max_retries=MAX_RETRIES, retry_interv
        Zwraca listę lokalnych plików które zostały pobrane (pełne ścieżki)."""
     pending = set(forecast_hours)
     downloaded_files = set()
-
     # If file already exists (from previous runs) assume ok and remove from pending (but we could validate)
     for fh in list(pending):
         local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
             downloaded_files.add(local_path)
             pending.remove(fh)
-
     attempt = 0
     while pending and (max_retries is None or attempt < max_retries):
         attempt += 1
@@ -258,18 +235,15 @@ def download_missing_gribs(forecast_hours, max_retries=MAX_RETRIES, retry_interv
                 downloaded_files.add(local_path)
                 pending.remove(fh)
                 continue
-
             url = build_url(grib_filename)
             try:
                 r = requests.get(url, headers=HEADERS, timeout=90)
             except Exception as e:
                 print(f" - Błąd requestu dla f{fstr}: {e}")
                 continue
-
             if r.status_code != 200 or b"GRIB" not in r.content[:10]:
                 print(f" - NOMADS zwrócił {r.status_code} (f{fstr}) — pomijam na teraz")
                 continue
-
             try:
                 with open(local_path, "wb") as f:
                     f.write(r.content)
@@ -278,18 +252,14 @@ def download_missing_gribs(forecast_hours, max_retries=MAX_RETRIES, retry_interv
                 pending.remove(fh)
             except Exception as e:
                 print(f" - Nie udało się zapisać f{fstr}: {e}")
-
         if pending:
             print(f"Nie wszystkie pliki pobrane. Kolejna próba za {retry_interval//60} minut.")
             sleep(retry_interval)
-
     if pending:
         print("\nUwaga: nie udało się pobrać wszystkich prognoz w przydzielonym czasie. Brakujące godziny:", sorted(pending))
     else:
         print("\nWszystkie żądane pliki pobrane.")
-
     return downloaded_files, sorted(list(pending))
-
 # -----------------------
 # CORE: przetwarzanie lokalnych plików GRIB -> df (działa nawet gdy nie ma wszystkich godzin)
 # -----------------------
@@ -300,7 +270,6 @@ def process_local_gribs(forecast_hours):
         if not os.path.exists(local_path):
             # brak pliku - pomiń (będzie niepełna tabela)
             continue
-
         # Open datasets like in poprzednim skrypcie
         ds_surface_instant = try_open_by_filter(local_path, {"typeOfLevel": "surface", "stepType": "instant"})
         ds_surface_accum = try_open_by_filter(local_path, {"typeOfLevel": "surface", "stepType": "accum"})
@@ -311,7 +280,6 @@ def process_local_gribs(forecast_hours):
         ds_mid = try_open_by_filter(local_path, {"typeOfLevel": "middleCloudLayer"})
         ds_high = try_open_by_filter(local_path, {"typeOfLevel": "highCloudLayer"})
         ds_t850 = try_open_by_filter(local_path, {"typeOfLevel": "isobaricInhPa", "level": 850})
-
         def get_val(datasets, key):
             if not isinstance(datasets, list):
                 datasets = [datasets]
@@ -321,7 +289,6 @@ def process_local_gribs(forecast_hours):
                     if not np.isnan(val):
                         return val
             return np.nan
-
         try:
             t2m = convert_and_round(get_val(ds_2m, "t2m"), "t2m")
             d2m = convert_and_round(get_val(ds_2m, "d2m"), "d2m")
@@ -344,10 +311,8 @@ def process_local_gribs(forecast_hours):
                 wind_dir = convert_and_round((np.degrees(np.arctan2(-u10_val, -v10_val)) + 360) % 360, "wind_dir")
             gust = convert_and_round(get_val([ds_surface_instant, ds_10m], "gust"), "gust")
             vis_km = convert_and_round(get_val([ds_surface_instant], "vis"), "vis")
-
             run_dt = datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H")
             valid_time = run_dt + timedelta(hours=fh)
-
             rows.append({
                 "Czas": valid_time,
                 "T+ (h)": fh,
@@ -371,12 +336,10 @@ def process_local_gribs(forecast_hours):
         except Exception as e:
             print(f" - Błąd przetwarzania pliku {local_path}: {e}")
             continue
-
     if rows:
         df = pd.DataFrame(rows)
     else:
         df = pd.DataFrame()
-
     # sort and compute daily stats
     df.sort_values("Czas", inplace=True)
     df.reset_index(drop=True, inplace=True)
@@ -404,13 +367,10 @@ def process_local_gribs(forecast_hours):
         daily["Date_str"] = daily["Date"].astype(str)
     else:
         daily = pd.DataFrame()
-
     df["LCL_m"] = df.apply(lambda r: lcl_height_m(r.get("T2M [°C]", np.nan), r.get("D2M [°C]", np.nan)) if not np.isnan(r.get("T2M [°C]", np.nan)) else np.nan, axis=1)
     df["PrecType"] = df.apply(lambda r: detect_precip_type(r.get("RRR [mm/3h]", np.nan), r.get("T2M [°C]", np.nan), r.get("T850 [°C]", np.nan)), axis=1)
     df["StormRisk"] = df.apply(lambda r: storm_risk_category(r.get("CAPE [J/kg]", np.nan), r.get("LIFTED [°C]", np.nan)), axis=1)
-
     return df, daily
-
 # -----------------------
 # SAVE to Excel + METEOROGRAM + DAILY PNG (re-using earlier code blocks)
 # -----------------------
@@ -422,12 +382,10 @@ def save_outputs(df, daily):
         daily.to_excel(writer, sheet_name="dzienna_prognoza", index=False)
         workbook = writer.book
         worksheet = writer.sheets["prognoza"]
-
         # minimal formatting (re-using many rules from Twoja wersja)
         border_fmt = workbook.add_format({'border': 1})
         if not df.empty:
             worksheet.conditional_format(f'A1:{chr(65 + len(df.columns) - 1)}{len(df) + 1}', {'type': 'no_blanks', 'format': border_fmt})
-
         # PrecType coloring
         if "PrecType" in df.columns:
             col_idx = df.columns.get_loc("PrecType")
@@ -440,47 +398,45 @@ def save_outputs(df, daily):
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Śnieg"', 'format': fmt_snow})
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Deszcz ze śniegiem"', 'format': fmt_mix})
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Deszcz marznący"', 'format': fmt_freeze})
-
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).map(len).max() if len(df)>0 else 0, len(col)) + 2
             worksheet.set_column(i, i, max_len)
-
     print("\n✅ Excel zapisany:", xlsx_path)
 
-        # Meteorogram 120h (if any data)
+    # CSV (bez kolorów)
+    csv_path = os.path.join(OUTPUT_DIR, f"krosno_gfs_{RUN_DATE}_{RUN_HOUR}z.csv")
+    df.to_csv(csv_path, index=False, encoding='utf-8')
+    print("\n✅ CSV zapisany:", csv_path)
+
+    # Meteorogram 120h (if any data)
     df_plot = df[df["T+ (h)"] <= 120].copy() if not df.empty else pd.DataFrame()
     out_png = os.path.join(OUTPUT_DIR, f"meteorogram_krosno_120h.png")
     if not df_plot.empty:
         fig, axes = plt.subplots(7, 1, figsize=(13, 15), sharex=True)
         fig.subplots_adjust(hspace=0.3)
         time_axis = df_plot["Czas"]
-
         # 1️⃣ Temperatura i punkt rosy
         axes[0].plot(time_axis, df_plot["T2M [°C]"], color="#D62728", label="Temperatura")
         axes[0].plot(time_axis, df_plot["D2M [°C]"], color="#1F77B4", linestyle="--", label="Punkt rosy")
         axes[0].set_ylabel("°C")
         axes[0].legend(loc="upper left", fontsize=8)
         axes[0].grid(True, ls=":")
-
         # 2️⃣ Opad słupkowo + suma
         axes[1].bar(time_axis, df_plot["RRR [mm/3h]"].fillna(0), width=0.08, color="#1F77B4", label="Opad [mm/3h]")
         axes[1].plot(time_axis, df_plot["RRR [mm/3h]"].fillna(0).cumsum(), color="#000080", linewidth=1, label="Suma opadów")
         axes[1].set_ylabel("mm/3h")
         axes[1].legend(loc="upper left", fontsize=8)
         axes[1].grid(True, ls=":")
-
         # 3️⃣ Ciśnienie
         axes[2].plot(time_axis, df_plot["MSLP [hPa]"], color="#000000")
         axes[2].set_ylabel("hPa")
         axes[2].grid(True, ls=":")
-
         # 4️⃣ Wiatr i porywy
         axes[3].plot(time_axis, df_plot["WSPD [m/s]"], color="#FF7F0E", label="Wiatr")
         axes[3].plot(time_axis, df_plot["GUST [m/s]"], color="#D62728", linestyle="--", label="Porywy")
         axes[3].set_ylabel("m/s")
         axes[3].legend(loc="upper left", fontsize=8)
         axes[3].grid(True, ls=":")
-
         # 5️⃣ Zachmurzenie (stacked)
         low = df_plot["CL [%]"].fillna(0)
         mid = df_plot["CM [%]"].fillna(0)
@@ -492,14 +448,12 @@ def save_outputs(df, daily):
         axes[4].set_ylim(0, 100)
         axes[4].legend(loc="upper left", fontsize=8)
         axes[4].grid(True, ls=":")
-
         # 6️⃣ CAPE + Lifted Index
         axes[5].plot(time_axis, df_plot["CAPE [J/kg]"].fillna(0), color="#8A2BE2", label="CAPE")
         axes[5].plot(time_axis, df_plot["LIFTED [°C]"], color="#2ca02c", linestyle="--", label="Lifted")
         axes[5].set_ylabel("CAPE / LI")
         axes[5].legend(loc="upper left", fontsize=8)
         axes[5].grid(True, ls=":")
-
         # 7️⃣ Śnieg + widzialność
         axes[6].bar(time_axis, df_plot["SNOW [cm]"].fillna(0), width=0.08, color="#87CEFA", label="Śnieg [cm]")
         ax7b = axes[6].twinx()
@@ -509,7 +463,6 @@ def save_outputs(df, daily):
         axes[6].legend(loc="upper left", fontsize=8)
         ax7b.legend(loc="upper right", fontsize=8)
         axes[6].grid(True, ls=":")
-
         date_fmt = DateFormatter("%d.%m\n%H UTC")
         axes[-1].xaxis.set_major_formatter(date_fmt)
         plt.suptitle(f"GFS Krosno – Meteorogram 120h ({RUN_DATE}{RUN_HOUR}Z)", fontsize=14, weight="bold")
@@ -518,7 +471,6 @@ def save_outputs(df, daily):
         print("✅ Meteorogram zapisany:", out_png)
     else:
         print("⚠️ Brak danych do meteorogramu.")
-
     # -----------------------
     # DAILY PNG SUMMARY (tabela z ikonami)
     # -----------------------
@@ -527,12 +479,10 @@ def save_outputs(df, daily):
                             "VIS_min", "StormRisk", "LCL_m", "Wsp_sred", "Pres_sred"]].copy()
         display_df.columns = ["Data", "Tmax", "Tmin", "Suma_opad", "Typ_opadu",
                               "Vis_min_km", "Ryzyko_burzy", "LCL_m", "W_sred", "P_sred"]
-
         fig2, ax2 = plt.subplots(figsize=(12, max(2, 0.7 * len(display_df) + 1)))
         ax2.axis('off')
         ax2.set_title(f"Prognoza dzienna - Krosno (pierwsze {len(display_df)} dni) - GFS {RUN_DATE}{RUN_HOUR}Z",
                       fontsize=12, weight="bold")
-
         cell_text = []
         cell_colors = []
         for _, row in display_df.iterrows():
@@ -549,12 +499,10 @@ def save_outputs(df, daily):
             else:
                 icon = ""
                 bg = "#FFFFFF"
-
             risk = row["Ryzyko_burzy"]
             risk_map = {"Brak": "#FFFFFF", "Niskie": "#FFFF99", "Średnie": "#FFD700",
                         "Wysokie": "#FF8C00", "Ekstremalne": "#FF4500"}
             risk_color = risk_map.get(risk, "#FFFFFF")
-
             text_row = [
                 row["Data"],
                 f"{row['Tmax']:.1f}°C" if not np.isnan(row['Tmax']) else "-",
@@ -572,7 +520,6 @@ def save_outputs(df, daily):
             row_colors[4] = bg
             row_colors[6] = risk_color
             cell_colors.append(row_colors)
-
         cols = ["Data", "Tmax", "Tmin", "Opad", "Typ opadu", "Widzialność",
                 "Ryzyko burzy", "LCL", "Wiatr śr.", "Ciśnienie śr."]
         table = ax2.table(cellText=cell_text, colLabels=cols,
@@ -580,17 +527,13 @@ def save_outputs(df, daily):
         table.auto_set_font_size(False)
         table.set_fontsize(10)
         table.scale(1, 1.2)
-
         out_daily = os.path.join(OUTPUT_DIR, "daily_summary.png")
         plt.savefig(out_daily, dpi=220, bbox_inches="tight")
         plt.close(fig2)
         print("✅ Daily summary PNG zapisany:", out_daily)
     else:
         print("⚠️ Brak danych dziennych do tabeli PNG.")
-
-    return [xlsx_path, out_png, os.path.join(OUTPUT_DIR, "daily_summary.png")]
-
-
+    return [xlsx_path, csv_path, out_png, os.path.join(OUTPUT_DIR, "daily_summary.png")]
 # -----------------------
 # FTP UPLOAD
 # -----------------------
@@ -598,37 +541,49 @@ def upload_to_ftp(files_to_send):
     """Wysyła pliki przez FTP, dane logowania z ENV (GitHub Secrets lub .env)"""
     # najpierw zaciągnij lokalne zmienne jeśli istnieje plik .env
     load_dotenv()
-
     # pobierz dane z ENV
     host = os.getenv("FTP_HOST")
     user = os.getenv("FTP_USER")
     passwd = os.getenv("FTP_PASS")
-
     # walidacja
     if not all([host, user, passwd]):
         print("⚠️ Brak danych FTP (ENV lub .env) – pomijam wysyłkę.")
         return
-
     try:
-        from ftplib import FTP, error_perm
         ftp = FTP(host, user, passwd, timeout=30)
         ftp.cwd("/stacja.meteo-krosno.pl/")
         for path in files_to_send:
             if not os.path.exists(path):
                 continue
-            fname = os.path.basename(path)
-            with open(path, "rb") as f:
-                ftp.storbinary(f"STOR {fname}", f)
-                print(f"📤 Wysłano na FTP: {fname}")
+            if path.endswith('.csv'):
+                # Nadpisz jako gfs-tab.csv w głównym katalogu
+                with open(path, "rb") as f:
+                    ftp.storbinary(f"STOR gfs-tab.csv", f)
+                    print(f"📤 Wysłano na FTP (nadpisano): gfs-tab.csv")
+                # Archiwalny w /archiv
+                arch_dir = "/stacja.meteo-krosno.pl/archiv"
+                try:
+                    ftp.cwd(arch_dir)
+                except error_perm:
+                    ftp.mkd(arch_dir)
+                    ftp.cwd(arch_dir)
+                arch_name = f"gfs_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
+                with open(path, "rb") as f:
+                    ftp.storbinary(f"STOR {arch_name}", f)
+                    print(f"📤 Wysłano na FTP (archiwum): {arch_name}")
+                # Wróć do głównego katalogu
+                ftp.cwd("/stacja.meteo-krosno.pl/")
+            else:
+                fname = os.path.basename(path)
+                with open(path, "rb") as f:
+                    ftp.storbinary(f"STOR {fname}", f)
+                    print(f"📤 Wysłano na FTP: {fname}")
         ftp.quit()
         print("✅ Wszystkie pliki wysłane na FTP.")
     except error_perm as e:
         print(f"❌ Błąd FTP (uprawnienia): {e}")
     except Exception as e:
         print(f"❌ Błąd podczas wysyłania na FTP: {e}")
-
-
-
 # -----------------------
 # MAIN
 # -----------------------
@@ -639,4 +594,3 @@ if __name__ == "__main__":
     files = save_outputs(df, daily)
     upload_to_ftp(files)
     print("\n🏁 Gotowe.\n")
-
