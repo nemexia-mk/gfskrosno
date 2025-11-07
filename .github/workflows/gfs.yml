@@ -24,10 +24,9 @@ jobs:
           pip install python-dotenv
 
       - name: Run GFS script
-  env:
-    FTP_HOST: "corn.cba.pl"
-    FTP_USER: "nemexia@stacja.meteo-krosno.pl"
-    FTP_PASS: ${{ secrets.FTP_PASS }}
-  run: |
-    python gfs_krosno.py
-
+        env:
+          FTP_HOST: "corn.cba.pl"
+          FTP_USER: "nemexia@stacja.meteo-krosno.pl"
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+        run: |
+          python gfs_krosno.py
