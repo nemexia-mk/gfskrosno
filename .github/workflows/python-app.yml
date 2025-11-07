@@ -1,0 +1,33 @@
+name: GFS Krosno – auto run
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"  # co 6 godzin
+  workflow_dispatch:        # umożliwia ręczne uruchomienie z GitHuba
+
+jobs:
+  run-gfs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests xarray numpy pandas matplotlib xlsxwriter cfgrib pygrib netcdf4
+          pip install python-dotenv
+
+      - name: Run GFS script
+  env:
+    FTP_HOST: "corn.cba.pl"
+    FTP_USER: "nemexia@stacja.meteo-krosno.pl"
+    FTP_PASS: ${{ secrets.FTP_PASS }}
+  run: |
+    python gfs_krosno.py
+
