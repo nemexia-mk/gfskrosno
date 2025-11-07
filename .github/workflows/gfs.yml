@@ -30,3 +30,4 @@ jobs:
           FTP_PASS: ${{ secrets.FTP_PASS }}
         run: |
           python gfs_krosno.py
+# Update workflow
