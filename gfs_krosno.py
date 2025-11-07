@@ -595,17 +595,24 @@ def save_outputs(df, daily):
 # FTP UPLOAD
 # -----------------------
 def upload_to_ftp(files_to_send):
-    """Wysyła pliki przez FTP, dane logowania z .env"""
+    """Wysyła pliki przez FTP, dane logowania z ENV (GitHub Secrets lub .env)"""
+    # najpierw zaciągnij lokalne zmienne jeśli istnieje plik .env
     load_dotenv()
+
+    # pobierz dane z ENV
     host = os.getenv("FTP_HOST")
     user = os.getenv("FTP_USER")
     passwd = os.getenv("FTP_PASS")
-    if not host or not user or not passwd:
-        print("⚠️ Brak danych FTP w pliku .env – pomijam wysyłkę.")
+
+    # walidacja
+    if not all([host, user, passwd]):
+        print("⚠️ Brak danych FTP (ENV lub .env) – pomijam wysyłkę.")
         return
+
     try:
+        from ftplib import FTP, error_perm
         ftp = FTP(host, user, passwd, timeout=30)
-        ftp.cwd("/")  # główny katalog
+        ftp.cwd("/")
         for path in files_to_send:
             if not os.path.exists(path):
                 continue
@@ -616,9 +623,10 @@ def upload_to_ftp(files_to_send):
         ftp.quit()
         print("✅ Wszystkie pliki wysłane na FTP.")
     except error_perm as e:
-        print("❌ Błąd FTP (uprawnienia):", e)
+        print(f"❌ Błąd FTP (uprawnienia): {e}")
     except Exception as e:
-        print("❌ Błąd podczas wysyłania na FTP:", e)
+        print(f"❌ Błąd podczas wysyłania na FTP: {e}")
+
 
 
 # -----------------------
