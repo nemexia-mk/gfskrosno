@@ -24,8 +24,10 @@ jobs:
           pip install python-dotenv
 
       - name: Run Python script
+        run: echo "FTP host is set to $FTP_HOST and user is $FTP_USER"
         env:
           FTP_HOST: ${{ secrets.FTP_HOST }}
           FTP_USER: ${{ secrets.FTP_USER }}
           FTP_PASS: ${{ secrets.FTP_PASS }}
         run: python gfs_krosno.py
+ 
