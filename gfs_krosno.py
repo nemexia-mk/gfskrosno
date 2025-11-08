@@ -152,7 +152,7 @@ def convert_and_round(val, name):
     if name in ("vis",):
         return float(np.round(val / 1000, 1))
     if name in ("weasd",):
-        return float(np.round(val * 10, 1))
+        return float(np.round(val * 1, 1))
     return float(np.round(val, 2))
 def lcl_height_m(t_c, td_c):
     if np.isnan(t_c) or np.isnan(td_c):
