@@ -545,69 +545,7 @@ def save_outputs(df, daily):
         print("✅ Meteorogram zapisany:", out_png)
     else:
         print("⚠️ Brak danych do meteorogramu.")
-    # -----------------------
-    # DAILY PNG SUMMARY (tabela z ikonami)
-    # -----------------------
-    if not daily.empty:
-        display_df = daily[["Date_str", "Tmax", "Tmin", "Suma_opadu", "PrecType",
-                            "VIS_min", "StormRisk", "LCL_m", "Wsp_sred", "Pres_sred"]].copy()
-        display_df.columns = ["Data", "Tmax", "Tmin", "Suma_opad", "Typ_opadu",
-                              "Vis_min_km", "Ryzyko_burzy", "LCL_m", "W_sred", "P_sred"]
-        fig2, ax2 = plt.subplots(figsize=(12, max(2, 0.7 * len(display_df) + 1)))
-        ax2.axis('off')
-        ax2.set_title(f"Prognoza dzienna - Krosno (pierwsze {len(display_df)} dni) - GFS {RUN_DATE}{RUN_HOUR}Z",
-                      fontsize=12, weight="bold")
-        cell_text = []
-        cell_colors = []
-        for _, row in display_df.iterrows():
-            prec = row["Typ_opadu"]
-            if prec == "Deszcz":
-                icon = "🌧️"
-                bg = PREC_TYPE_TO_COLOR.get("Deszcz", "#90EE90")
-            elif prec == "Śnieg":
-                icon = "❄️"
-                bg = PREC_TYPE_TO_COLOR.get("Śnieg", "#ADD8E6")
-            elif prec == "Deszcz marznący":
-                icon = "🧊"
-                bg = PREC_TYPE_TO_COLOR.get("Deszcz marznący", "#FFA500")
-            else:
-                icon = ""
-                bg = "#FFFFFF"
-            risk = row["Ryzyko_burzy"]
-            risk_map = {"Brak": "#FFFFFF", "Niskie": "#FFFF99", "Średnie": "#FFD700",
-                        "Wysokie": "#FF8C00", "Ekstremalne": "#FF4500"}
-            risk_color = risk_map.get(risk, "#FFFFFF")
-            text_row = [
-                row["Data"],
-                f"{row['Tmax']:.1f}°C" if not np.isnan(row['Tmax']) else "-",
-                f"{row['Tmin']:.1f}°C" if not np.isnan(row['Tmin']) else "-",
-                f"{row['Suma_opad']:.1f} mm" if not np.isnan(row['Suma_opad']) else "-",
-                f"{icon} {prec}",
-                f"{row['Vis_min_km']:.1f} km" if not np.isnan(row['Vis_min_km']) else "-",
-                risk,
-                f"{row['LCL_m']:.0f} m" if not np.isnan(row['LCL_m']) else "-",
-                f"{row['W_sred']:.1f} m/s" if not np.isnan(row['W_sred']) else "-",
-                f"{row['P_sred']:.1f} hPa" if not np.isnan(row['P_sred']) else "-"
-            ]
-            cell_text.append(text_row)
-            row_colors = ["#FFFFFF"] * len(text_row)
-            row_colors[4] = bg
-            row_colors[6] = risk_color
-            cell_colors.append(row_colors)
-        cols = ["Data", "Tmax", "Tmin", "Opad", "Typ opadu", "Widzialność",
-                "Ryzyko burzy", "LCL", "Wiatr śr.", "Ciśnienie śr."]
-        table = ax2.table(cellText=cell_text, colLabels=cols,
-                          cellColours=cell_colors, loc='center', cellLoc='center')
-        table.auto_set_font_size(False)
-        table.set_fontsize(10)
-        table.scale(1, 1.2)
-        out_daily = os.path.join(OUTPUT_DIR, "daily_summary.png")
-        plt.savefig(out_daily, dpi=220, bbox_inches="tight")
-        plt.close(fig2)
-        print("✅ Daily summary PNG zapisany:", out_daily)
-    else:
-        print("⚠️ Brak danych dziennych do tabeli PNG.")
-    return [xlsx_path, csv_path, out_png, os.path.join(OUTPUT_DIR, "daily_summary.png")]
+
 # -----------------------
 # FTP UPLOAD
 # -----------------------
