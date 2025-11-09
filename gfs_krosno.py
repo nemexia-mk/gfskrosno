@@ -12,6 +12,7 @@ from matplotlib.dates import DateFormatter
 from time import sleep
 from dotenv import load_dotenv
 from ftplib import FTP, error_perm
+import sys
 # -----------------------
 # CONFIG
 # -----------------------
@@ -46,7 +47,7 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 FORECAST_HOURS = list(range(0, 385, 3)) # pełny zakres; wykres będzie ograniczony do 120h
 # Retry policy
 RETRY_INTERVAL_SECONDS = 10 * 60 # 10 minut
-MAX_RETRIES = 12 # domyślnie spróbuj 12 razy (2 godziny); ustaw None aby próbować w nieskończoność
+MAX_RETRIES = 2 # domyślnie spróbuj 2 razy (20 minut); ustaw None aby próbować w nieskończoność
 # Static NOMADS filter
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on"
@@ -209,6 +210,79 @@ PREC_TYPE_TO_COLOR = {
     "Deszcz marznący": "#FFA500",
 }
 # -----------------------
+# NEW: Function to handle 404 error and exit script
+# -----------------------
+def handle_404_and_exit():
+    print("❌ Błąd 404 dla pierwszej godziny (f000) - przerywam cały skrypt i odpuszczam zadanie.")
+    sys.exit(0)  # Zakończ skrypt z kodem 0 (sukces, ale bez przetwarzania)
+
+# -----------------------
+# NEW: Function to check and fetch previous cycle if missing on FTP
+# -----------------------
+def check_and_fetch_previous_cycle(current_run_date, current_run_hour):
+    # Oblicz poprzedni cykl
+    current_dt = datetime.strptime(current_run_date + current_run_hour, "%Y%m%d%H")
+    previous_dt = current_dt - timedelta(hours=6)
+    previous_date = previous_dt.strftime("%Y%m%d")
+    previous_hour = previous_dt.strftime("%H")
+    previous_arch_name = f"gfs_tab_{previous_date[:4]}_{previous_date[4:6]}_{previous_date[6:8]}_{previous_hour}.csv"
+    
+    # Połącz się z FTP i sprawdź czy plik istnieje w /archiv
+    load_dotenv()
+    host = os.getenv("FTP_HOST")
+    user = os.getenv("FTP_USER")
+    passwd = os.getenv("FTP_PASS")
+    if not all([host, user, passwd]):
+        print("⚠️ Brak danych FTP – nie mogę sprawdzić poprzedniego cyklu.")
+        return
+    
+    try:
+        ftp = FTP(host, user, passwd, timeout=30)
+        arch_dir = "/stacja.meteo-krosno.pl/archiv"
+        try:
+            ftp.cwd(arch_dir)
+        except error_perm:
+            print(f"⚠️ Folder {arch_dir} nie istnieje – zakładam, że poprzedni cykl nie jest obecny.")
+            ftp.quit()
+            fetch_previous_cycle(previous_date, previous_hour)
+            return
+        file_list = ftp.nlst()
+        if previous_arch_name not in file_list:
+            print(f"⚠️ Poprzedni cykl ({previous_arch_name}) nie znaleziony na FTP – pobieram go.")
+            ftp.quit()
+            fetch_previous_cycle(previous_date, previous_hour)
+        else:
+            print(f"✅ Poprzedni cykl ({previous_arch_name}) jest obecny na FTP.")
+        ftp.quit()
+    except Exception as e:
+        print(f"❌ Błąd podczas sprawdzania FTP: {e}")
+
+def fetch_previous_cycle(prev_date, prev_hour):
+    global CYCLE_DIR, RUN_DATE, RUN_HOUR
+    orig_date = RUN_DATE
+    orig_hour = RUN_HOUR
+    orig_cycle_dir = CYCLE_DIR
+    
+    # Ustaw na poprzedni
+    RUN_DATE = prev_date
+    RUN_HOUR = prev_hour
+    CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
+    print(f"\n=== Pobieranie poprzedniego cyklu: {RUN_DATE}{RUN_HOUR}Z ===")
+    
+    downloaded, missing = download_missing_gribs(FORECAST_HOURS)
+    if 0 in missing:  # Jeśli nawet poprzedni nie działa, pomiń
+        print("⚠️ Poprzedni cykl również niedostępny – pomijam.")
+    else:
+        df, daily = process_local_gribs(FORECAST_HOURS)
+        files = save_outputs(df, daily)
+        upload_to_ftp(files)
+    
+    # Przywróć oryginalne
+    RUN_DATE = orig_date
+    RUN_HOUR = orig_hour
+    CYCLE_DIR = orig_cycle_dir
+
+# -----------------------
 # DOWNLOAD with RETRY logic
 # -----------------------
 def download_missing_gribs(forecast_hours, max_retries=MAX_RETRIES, retry_interval=RETRY_INTERVAL_SECONDS):
@@ -241,6 +315,8 @@ def download_missing_gribs(forecast_hours, max_retries=MAX_RETRIES, retry_interv
             except Exception as e:
                 print(f" - Błąd requestu dla f{fstr}: {e}")
                 continue
+            if r.status_code == 404 and fh == 0:
+                handle_404_and_exit()  # Nowa funkcja: zakończ skrypt
             if r.status_code != 200 or b"GRIB" not in r.content[:10]:
                 print(f" - NOMADS zwrócił {r.status_code} (f{fstr}) — pomijam na teraz")
                 continue
@@ -402,12 +478,10 @@ def save_outputs(df, daily):
             max_len = max(df[col].astype(str).map(len).max() if len(df)>0 else 0, len(col)) + 2
             worksheet.set_column(i, i, max_len)
     print("\n✅ Excel zapisany:", xlsx_path)
-
     # CSV (bez kolorów)
     csv_path = os.path.join(OUTPUT_DIR, f"krosno_gfs_{RUN_DATE}_{RUN_HOUR}z.csv")
     df.to_csv(csv_path, index=False, encoding='utf-8')
     print("\n✅ CSV zapisany:", csv_path)
-
     # Meteorogram 120h (if any data)
     df_plot = df[df["T+ (h)"] <= 120].copy() if not df.empty else pd.DataFrame()
     out_png = os.path.join(OUTPUT_DIR, f"meteorogram_krosno_120h.png")
@@ -589,6 +663,9 @@ def upload_to_ftp(files_to_send):
 # -----------------------
 if __name__ == "__main__":
     print(f"\n=== Start GFS Krosno {RUN_DATE}{RUN_HOUR}Z ===")
+    # Najpierw sprawdź i ewentualnie pobierz poprzedni cykl
+    check_and_fetch_previous_cycle(RUN_DATE, RUN_HOUR)
+    # Teraz pobierz bieżący
     downloaded, missing = download_missing_gribs(FORECAST_HOURS)
     df, daily = process_local_gribs(FORECAST_HOURS)
     files = save_outputs(df, daily)
