@@ -546,6 +546,7 @@ def save_outputs(df, daily):
     else:
         print("⚠️ Brak danych do meteorogramu.")
 
+    return [xlsx_path, csv_path, out_png]
 # -----------------------
 # FTP UPLOAD
 # -----------------------
