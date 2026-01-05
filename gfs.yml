@@ -1,13 +1,14 @@
-name: GFS Krosno – auto run
+name: GFS + ECMWF Krosno – auto run
 
 on:
   schedule:
     - cron: "0 */6 * * *"  # co 6 godzin
-  workflow_dispatch:        # umożliwia ręczne uruchomienie z GitHuba
+  workflow_dispatch:      # ręczne uruchomienie z GitHuba
 
 jobs:
-  run-gfs:
+  run-models:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -38,5 +39,3 @@ jobs:
           FTP_PASS: ${{ secrets.FTP_PASS }}
         run: |
           python ecmwf_krosno.py
-
-# Update workflow
