@@ -36,10 +36,10 @@ def get_run_info():
     current_time = now_utc.time()
 
     # Punkty odcięcia (po każdej godzinie runu + ok. 2-3h na przetworzenie)
-    cutoff_00 = dt_time(3, 0)   # po 00Z dostępny ok. 02:30-03:00
-    cutoff_06 = dt_time(9, 0)   # po 06Z dostępny ok. 08:30-09:00
-    cutoff_12 = dt_time(15, 0)  # po 12Z dostępny ok. 14:30-15:00
-    cutoff_18 = dt_time(21, 0)  # po 18Z dostępny ok. 20:30-21:00
+    cutoff_00 = dt_time(9, 0)   # po 00Z dostępny ok. 02:30-03:00
+    cutoff_06 = dt_time(15, 0)   # po 06Z dostępny ok. 08:30-09:00
+    cutoff_12 = dt_time(21, 0)  # po 12Z dostępny ok. 14:30-15:00
+    cutoff_18 = dt_time(3, 0)  # po 18Z dostępny ok. 20:30-21:00
 
     if current_time < cutoff_00:
         # Bardzo wcześnie rano – bierzemy wczorajszy 18Z
@@ -263,3 +263,4 @@ if __name__ == "__main__":
     files = save_csv(df)
     upload_to_ftp(files)
     print("🏁 Gotowe.")
+
