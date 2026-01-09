@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# icon2.py - Wersja Stabilna (Iteracja po parametrach)
+# icon2.py - Wersja Stabilna (Poprawione zarządzanie czasem)
 
 import os
 import shutil
@@ -83,8 +83,8 @@ def clean_temp():
 def process_single_param(param, run_date, run_hour):
     """
     1. Pobiera pliki TYLKO dla danego parametru.
-    2. Otwiera je w xarray (bezpiecznie, bo mają tę samą strukturę).
-    3. Zwraca DataFrame z serią czasową.
+    2. Otwiera je w xarray.
+    3. Zwraca DataFrame z serią czasową, poprawnie obsługując kolumny czasu.
     """
     base_url = f"https://opendata.dwd.de/weather/nwp/icon-eu/grib/{run_hour.lower()}/{param}/"
     clean_temp() # Czyść przed startem
@@ -98,7 +98,6 @@ def process_single_param(param, run_date, run_hour):
             print(f"  ⚠️ Brak dostępu do {param}")
             return None
         
-        # Filtrujemy pliki: tylko regular-lat-lon i właściwy run
         files_to_dl = [
             line.split('"')[1] 
             for line in resp.text.splitlines() 
@@ -117,6 +116,7 @@ def process_single_param(param, run_date, run_hour):
     # 2. Pobieranie plików
     grib_files = []
     
+    # Opcjonalnie: Limit plików dla testów, np. [:10]. Usuń slice, by pobrać wszystko.
     print(f"  ⬇️ Pobieranie {len(files_to_dl)} plików...")
     
     for fname in files_to_dl:
@@ -125,18 +125,16 @@ def process_single_param(param, run_date, run_hour):
         url = base_url + fname
         
         try:
-            # Pobieranie
             with requests.get(url, stream=True, timeout=30) as r:
                 r.raise_for_status()
                 with open(local_bz2, "wb") as f:
                     for chunk in r.iter_content(chunk_size=16384): f.write(chunk)
             
-            # Rozpakowanie
             with bz2.open(local_bz2, "rb") as fbz, open(local_grib, "wb") as fg:
                 fg.write(fbz.read())
             
             grib_files.append(local_grib)
-            os.remove(local_bz2) # Usuwamy bz2 od razu
+            os.remove(local_bz2) 
         except Exception:
             continue
 
@@ -153,7 +151,6 @@ def process_single_param(param, run_date, run_hour):
             backend_kwargs={'errors': 'ignore', 'indexpath': ''}
         )
         
-        # Wybór punktu
         if 'latitude' in ds.coords:
             point = ds.sel(latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
         else:
@@ -167,11 +164,10 @@ def process_single_param(param, run_date, run_hour):
         return None
 
     # 4. Sprzątanie i formatowanie tabeli
-    
-    # Szukamy nazwy kolumny z danymi
     coords_cols = ['time', 'valid_time', 'step', 'latitude', 'longitude', 'lat', 'lon', 'surface', 'heightAboveGround', 'number', 'meanSea']
     data_col = None
     
+    # Znajdź właściwą kolumnę z danymi
     for col in df.columns:
         if col.lower() in RENAME_MAP:
             data_col = col
@@ -183,58 +179,23 @@ def process_single_param(param, run_date, run_hour):
 
     if not data_col: return None
 
-    # --- POPRAWKA TUTAJ ---
-    # Ujednolicenie czasu: valid_time to czas prognozy, time to czas startu runu.
-    # Jeśli mamy oba, musimy usunąć stary 'time' przed zmianą nazwy 'valid_time'.
+    # --- POPRAWKA KLUCZOWA (Unikanie duplikatu 'time') ---
+    # Jeśli mamy valid_time (czas prognozy) i time (start runu),
+    # usuwamy ten drugi, by uniknąć kolizji przy zmianie nazwy.
     if "valid_time" in df.columns:
         if "time" in df.columns:
-            df = df.drop(columns=["time"]) # Usuwamy czas startu runu (jest stały)
+            df = df.drop(columns=["time"])
         df = df.rename(columns={"valid_time": "time"})
-    # ----------------------
-    
-    # Tworzymy wynikowy DF tylko z czasem i wartością
-    # Teraz mamy pewność, że jest tylko jedna kolumna 'time'
+    # -----------------------------------------------------
+
+    # Tworzymy wynikowy DF
     df_out = df[["time", data_col]].copy()
     
+    # Standaryzacja nazwy parametru
     std_name = RENAME_MAP.get(data_col.lower(), param)
     df_out = df_out.rename(columns={data_col: std_name})
     
-    df_out = df_out.drop_duplicates(subset="time")
-    
-    return df_out
-
-    # 4. Sprzątanie i formatowanie tabeli
-    
-    # Szukamy nazwy kolumny z danymi (bo cfgrib może ją nazwać np. '2t', 'Unknown' itp.)
-    # Ignorujemy kolumny współrzędnych
-    coords_cols = ['time', 'valid_time', 'step', 'latitude', 'longitude', 'lat', 'lon', 'surface', 'heightAboveGround', 'number', 'meanSea']
-    data_col = None
-    
-    # Najpierw sprawdźmy czy jest w naszej mapie
-    for col in df.columns:
-        if col.lower() in RENAME_MAP:
-            data_col = col
-            break
-            
-    # Jeśli nie, bierzemy pierwszą, która nie jest coordem
-    if not data_col:
-        potential = [c for c in df.columns if c not in coords_cols]
-        if potential: data_col = potential[0]
-
-    if not data_col: return None
-
-    # Ujednolicenie czasu
-    if "valid_time" in df.columns:
-        df = df.rename(columns={"valid_time": "time"})
-    
-    # Tworzymy wynikowy DF tylko z czasem i wartością
-    df_out = df[["time", data_col]].copy()
-    
-    # Zmieniamy nazwę na naszą standardową (np. '2t' -> 't_2m')
-    std_name = RENAME_MAP.get(data_col.lower(), param) # Jeśli nie ma w mapie, użyj nazwy folderu
-    df_out = df_out.rename(columns={data_col: std_name})
-    
-    # Usuwamy duplikaty czasu (czasem DWD dubluje kroki)
+    # Usuwamy ewentualne duplikaty czasu
     df_out = df_out.drop_duplicates(subset="time")
     
     return df_out
@@ -260,11 +221,10 @@ def main():
             if final_df.empty:
                 final_df = df_param
             else:
-                # Łączymy (merge) po czasie. 'outer' zapewnia, że nie zgubimy danych 
-                # jeśli jeden parametr ma mniej kroków niż inny.
+                # Teraz łączenie jest bezpieczne, bo w process_single_param
+                # zadbaliśmy o unikalność kolumny 'time'
                 final_df = pd.merge(final_df, df_param, on="time", how="outer")
         
-        # Ważne: Czyścimy dysk po każdym parametrze!
         clean_temp()
 
     if final_df.empty:
@@ -276,58 +236,53 @@ def main():
     # --- OBLICZENIA I KONWERSJE ---
     df = final_df.sort_values("time").reset_index(drop=True)
     
-    # Wypełnianie braków zerami tam, gdzie to bezpieczne
     cols_zero = ["tot_prec", "snow_con", "h_snow", "cape_ml", "u_10m", "v_10m"]
     for c in cols_zero:
         if c in df.columns: df[c] = df[c].fillna(0.0)
 
-    # Temperatura i Punkt Rosy (K -> C)
+    # Temperatura i Punkt Rosy
     if "t_2m" in df.columns: df["T2M [°C]"] = (df["t_2m"] - 273.15).round(1)
     if "td_2m" in df.columns: df["D2M [°C]"] = (df["td_2m"] - 273.15).round(1)
     
-    # Ciśnienie (Pa -> hPa)
+    # Ciśnienie
     if "pmsl" in df.columns: df["MSLP [hPa]"] = (df["pmsl"] / 100).round(1)
     
-    # Chmury (0-1 -> %)
+    # Chmury
     for raw, out in [("clct", "CC"), ("clcl", "CL"), ("clcm", "CM"), ("clch", "CH")]:
         if raw in df.columns:
             vals = df[raw]
-            # Czasem są w skali 0-1, czasem 0-100. Normalizacja:
             if vals.max() <= 1.1: vals = vals * 100
             df[f"{out} [%]"] = vals.round(0)
         else:
             df[f"{out} [%]"] = 0
 
-    # Wiatr (Wektory -> Prędkość/Kierunek)
+    # Wiatr
     if "u_10m" in df.columns and "v_10m" in df.columns:
         df["WSPD [m/s]"] = np.sqrt(df["u_10m"]**2 + df["v_10m"]**2).round(1)
         df["WDIR [°]"] = (np.degrees(np.arctan2(df["v_10m"], df["u_10m"])) + 360) % 360
         df["WDIR [°]"] = df["WDIR [°]"].round(0)
     
-    # Porywy
     if "vmax_10m" in df.columns:
         df["GUST [m/s]"] = df["vmax_10m"].round(1)
     else:
         df["GUST [m/s]"] = df.get("WSPD [m/s]", 0)
 
-    # Opad (Akumulowany -> Przyrost)
+    # Opad
     if "tot_prec" in df.columns:
-        # diff() oblicza różnicę między kolejnymi wierszami
         df["RRR [mm]"] = df["tot_prec"].diff().fillna(0)
         df.loc[df["RRR [mm]"] < 0, "RRR [mm]"] = 0 
-        # Suma 3-godzinna (rolling)
         df["RRR [mm/3h]"] = df["RRR [mm]"].rolling(3, min_periods=1).sum().round(1)
     else:
         df["RRR [mm/3h]"] = 0.0
 
     # Śnieg
     if "h_snow" in df.columns:
-        df["SNOW_DEPTH [cm]"] = (df["h_snow"] * 100).round(1) # Metry -> cm
+        df["SNOW_DEPTH [cm]"] = (df["h_snow"] * 100).round(1)
     else:
         df["SNOW_DEPTH [cm]"] = 0.0
     
     if "snow_con" in df.columns:
-        df["SNOW [cm]"] = df["snow_con"].round(1) # Zwykle kg/m2 ~= mm ~= cm śniegu świeżego
+        df["SNOW [cm]"] = df["snow_con"].round(1)
     else:
         df["SNOW [cm]"] = 0.0
 
@@ -351,7 +306,6 @@ def main():
     ]
     
     df = df.rename(columns={"time": "Czas"})
-    # Wybieramy tylko te kolumny, które udało się obliczyć
     df_final = df[[c for c in final_cols if c in df.columns]]
     
     # --- ZAPIS CSV ---
@@ -359,14 +313,12 @@ def main():
     df_final.to_csv(csv_path, index=False)
     print(f"💾 Zapisano: {csv_path}")
 
-    # Archiwum
     arch_path = os.path.join(OUTPUT_DIR, f"icon-arch-{run_label}.csv")
     df_final.to_csv(arch_path, index=False)
 
     # --- FTP UPLOAD ---
     upload_ftp([csv_path, arch_path])
     
-    # Sprzątanie końcowe folderu temp
     clean_temp()
 
 def upload_ftp(files):
@@ -392,13 +344,12 @@ def upload_ftp(files):
                     ftp.storbinary("STOR icon-tab.csv", f)
                     print("📤 FTP Upload: icon-tab.csv OK")
                 else:
-                    # Archiwum do podkatalogu
                     try: ftp.cwd("/stacja.meteo-krosno.pl/archiv")
                     except: pass
                     f.seek(0)
                     ftp.storbinary(f"STOR {fname}", f)
                     print(f"📤 FTP Upload: {fname} OK")
-                    ftp.cwd("/stacja.meteo-krosno.pl/") # powrót
+                    ftp.cwd("/stacja.meteo-krosno.pl/")
                     
         ftp.quit()
     except Exception as e:
@@ -406,4 +357,3 @@ def upload_ftp(files):
 
 if __name__ == "__main__":
     main()
-
