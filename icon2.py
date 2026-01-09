@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# icon_fixed.py - Wersja z naprawionym wykrywaniem h_snow
+# icon_final_depth_only.py - Wersja BEZ snow_con, tylko h_snow (pokrywa)
 
 import os
 import shutil
@@ -23,29 +23,28 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 KROSNO_LAT = 49.69
 KROSNO_LON = 21.77
 
-# Lista parametrów
+# Lista parametrów - USUNIĘTO snow_con
 PARAMS = [
-    "t_2m", "td_2m", "pmsl", "tot_prec", "snow_con", "h_snow",
+    "t_2m", "td_2m", "pmsl", "tot_prec", "h_snow",
     "clct", "clcl", "clcm", "clch", "u_10m", "v_10m", "vmax_10m",
     "cape_ml", "cin_ml", "vis"
 ]
 
 # Mapa nazw: GRIB shortName -> Nasza nazwa
-# ROZSZERZONA O WSZYSTKIE MOŻLIWE NAZWY ŚNIEGU
+# USUNIĘTO WSZELKIE ODNIESIENIA DO snow_con / csfwe / lsfwe
 RENAME_MAP = {
     "t2m": "t_2m", "2t": "t_2m",
     "d2m": "td_2m", "2d": "td_2m",
     "prmsl": "pmsl", "pmsl": "pmsl",
     "tp": "tot_prec",
-    "csfwe": "snow_con", "lsfwe": "snow_con", "snow_con": "snow_con",
     
-    # --- POKRYWA ŚNIEŻNA (kluczowe poprawki) ---
-    "sde": "h_snow",         # Standard GRIB
-    "sd": "h_snow",          # Alternatywny skrót
+    # --- POKRYWA ŚNIEŻNA (Priorytet) ---
+    "sde": "h_snow",         # Standard GRIB (Snow Depth)
+    "sd": "h_snow",          # Częsty skrót
     "h_snow": "h_snow",      # Nazwa folderu
     "snow_depth": "h_snow",  # Pełna nazwa
     "depth": "h_snow",       # Ogólna nazwa
-    # -------------------------------------------
+    # -----------------------------------
 
     "clct": "clct", "clcl": "clcl", "clcm": "clcm", "clch": "clch",
     "u10": "u_10m", "10u": "u_10m",
@@ -171,26 +170,25 @@ def process_single_param(param, run_date, run_hour):
             backend_kwargs={'errors': 'ignore', 'indexpath': ''}
         )
         
-        # --- DIAGNOSTYKA DLA ŚNIEGU ---
-        # Sprawdzamy czy w ogóle w pliku jest jakiś śnieg (gdziekolwiek)
+        # --- DIAGNOSTYKA DLA h_snow ---
         if param == "h_snow":
-            # Szukamy zmiennej śniegowej w całym dataset
             found_var = None
+            # Szukamy, jak cfgrib nazwał zmienną wewnątrz pliku
             for v in ds.data_vars:
-                if v in RENAME_MAP or v in ['sde', 'sd', 'snow_depth']:
+                if v in RENAME_MAP or v in ['sde', 'sd', 'snow_depth', 'depth']:
                     found_var = v
                     break
             
             if found_var:
                 max_val = ds[found_var].max().values
-                print(f"  ❄️ DIAGNOSTYKA h_snow: Max wartość w pliku (cała Europa): {max_val:.4f} m ({(max_val*100):.1f} cm)")
+                print(f"  ❄️ DIAGNOSTYKA h_snow (nazwa w pliku: {found_var}):")
+                print(f"     Max wartość w CAŁEJ Europie: {max_val:.4f} m ({(max_val*100):.1f} cm)")
                 if max_val == 0:
                     print("  ⚠️ UWAGA: Plik GRIB zawiera same zera dla h_snow!")
             else:
-                print(f"  ⚠️ UWAGA: Nie znaleziono zmiennej śniegowej w pliku! Zmienne: {list(ds.data_vars)}")
+                print(f"  ⚠️ UWAGA: Nie znaleziono zmiennej śniegowej w pliku! Dostępne: {list(ds.data_vars)}")
         # ------------------------------
 
-        # Wybór punktu
         if 'latitude' in ds.coords:
             point = ds.sel(latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
         else:
@@ -208,22 +206,17 @@ def process_single_param(param, run_date, run_hour):
                    'surface', 'heightAboveGround', 'number', 'meanSea', 'depthBelowLandLayer']
     
     data_col = None
-    # 1. Szukaj po mapie nazw
     for col in df.columns:
         if col.lower() in RENAME_MAP:
             data_col = col
             break
             
-    # 2. Jeśli nie znaleziono, weź pierwszą kolumnę niebędącą współrzędną
     if not data_col:
         potential = [c for c in df.columns if c not in coords_cols]
-        if potential: 
-            data_col = potential[0]
-            print(f"  ⚠️ Używam domyślnej kolumny danych: {data_col}")
+        if potential: data_col = potential[0]
 
     if not data_col: return None
 
-    # Czas
     time_series = None
     if "valid_time" in df.columns:
         time_series = df["valid_time"]
@@ -234,7 +227,7 @@ def process_single_param(param, run_date, run_hour):
     if time_series is None: return None
         
     val_series = df[data_col]
-    std_name = RENAME_MAP.get(data_col.lower(), param) # Znormalizowana nazwa
+    std_name = RENAME_MAP.get(data_col.lower(), param)
     
     df_out = pd.DataFrame({
         "time": time_series,
@@ -273,7 +266,8 @@ def main():
     print("\n✅ Pobieranie zakończone. Obliczenia...")
     df = final_df.sort_values("time").reset_index(drop=True)
     
-    cols_zero = ["tot_prec", "snow_con", "h_snow", "cape_ml", "u_10m", "v_10m"]
+    # Usunięto snow_con z listy zerowania
+    cols_zero = ["tot_prec", "h_snow", "cape_ml", "u_10m", "v_10m"]
     for c in cols_zero:
         if c in df.columns: df[c] = df[c].fillna(0.0)
 
@@ -304,18 +298,13 @@ def main():
     else:
         df["RRR [mm/3h]"] = 0.0
 
-    # --- POPRAWIONA POKRYWA ŚNIEŻNA ---
-    # h_snow (w metrach) * 100 -> cm
+    # --- TYLKO POKRYWA ŚNIEŻNA (h_snow) ---
     if "h_snow" in df.columns:
         df["SNOW_DEPTH [cm]"] = (df["h_snow"] * 100).round(1)
     else:
         df["SNOW_DEPTH [cm]"] = 0.0
     
-    # Opad śniegu (snow_con) - tylko przyrost
-    if "snow_con" in df.columns:
-        df["SNOW [cm]"] = df["snow_con"].round(1)
-    else:
-        df["SNOW [cm]"] = 0.0
+    # Parametr 'SNOW [cm]' (opad) został całkowicie usunięty.
 
     df["CAPE [J/kg]"] = df.get("cape_ml", 0).round(0)
     df["VIS [km]"] = (df["vis"] / 1000).round(1) if "vis" in df.columns else 50.0
@@ -323,10 +312,12 @@ def main():
     start_time = df["time"].iloc[0]
     df["T+ (h)"] = ((df["time"] - start_time).dt.total_seconds() / 3600).astype(int)
 
+    # Usunięto SNOW [cm] z listy wynikowej
     final_cols = [
         "time", "T+ (h)", "T2M [°C]", "D2M [°C]", "MSLP [hPa]",
-        "CL [%]", "CM [%]", "CH [%]", "CC [%]", "RRR [mm/3h]", "SNOW [cm]",
-        "WSPD [m/s]", "GUST [m/s]", "WDIR [°]", "CAPE [J/kg]", "VIS [km]", "SNOW_DEPTH [cm]"
+        "CL [%]", "CM [%]", "CH [%]", "CC [%]", "RRR [mm/3h]", 
+        "WSPD [m/s]", "GUST [m/s]", "WDIR [°]", "CAPE [J/kg]", "VIS [km]", 
+        "SNOW_DEPTH [cm]"
     ]
     
     df = df.rename(columns={"time": "Czas"})
