@@ -116,9 +116,6 @@ def process_single_param(param, run_date, run_hour):
 
     # 2. Pobieranie plików
     grib_files = []
-    # Pobieramy max 50 plików na raz (np. do 48h prognozy), 
-    # jeśli chcesz całą prognozę (120h), usuń [:50] lub zwiększ limit.
-    # Tutaj pobieramy wszystkie dostępne:
     
     print(f"  ⬇️ Pobieranie {len(files_to_dl)} plików...")
     
@@ -141,15 +138,12 @@ def process_single_param(param, run_date, run_hour):
             grib_files.append(local_grib)
             os.remove(local_bz2) # Usuwamy bz2 od razu
         except Exception:
-            # Ignorujemy pojedyncze błędy pobierania
             continue
 
     if not grib_files: return None
 
     # 3. Otwieranie w Xarray
     try:
-        # combine='nested' i concat_dim='step' (lub valid_time) to klucz do sukcesu
-        # gdy mamy pliki jednego parametru
         ds = xr.open_mfdataset(
             grib_files, 
             engine="cfgrib", 
@@ -160,7 +154,6 @@ def process_single_param(param, run_date, run_hour):
         )
         
         # Wybór punktu
-        # ICON czasem używa 'latitude', czasem 'lat'
         if 'latitude' in ds.coords:
             point = ds.sel(latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
         else:
@@ -172,6 +165,43 @@ def process_single_param(param, run_date, run_hour):
     except Exception as e:
         print(f"  ❌ Błąd xarray dla {param}: {e}")
         return None
+
+    # 4. Sprzątanie i formatowanie tabeli
+    
+    # Szukamy nazwy kolumny z danymi
+    coords_cols = ['time', 'valid_time', 'step', 'latitude', 'longitude', 'lat', 'lon', 'surface', 'heightAboveGround', 'number', 'meanSea']
+    data_col = None
+    
+    for col in df.columns:
+        if col.lower() in RENAME_MAP:
+            data_col = col
+            break
+            
+    if not data_col:
+        potential = [c for c in df.columns if c not in coords_cols]
+        if potential: data_col = potential[0]
+
+    if not data_col: return None
+
+    # --- POPRAWKA TUTAJ ---
+    # Ujednolicenie czasu: valid_time to czas prognozy, time to czas startu runu.
+    # Jeśli mamy oba, musimy usunąć stary 'time' przed zmianą nazwy 'valid_time'.
+    if "valid_time" in df.columns:
+        if "time" in df.columns:
+            df = df.drop(columns=["time"]) # Usuwamy czas startu runu (jest stały)
+        df = df.rename(columns={"valid_time": "time"})
+    # ----------------------
+    
+    # Tworzymy wynikowy DF tylko z czasem i wartością
+    # Teraz mamy pewność, że jest tylko jedna kolumna 'time'
+    df_out = df[["time", data_col]].copy()
+    
+    std_name = RENAME_MAP.get(data_col.lower(), param)
+    df_out = df_out.rename(columns={data_col: std_name})
+    
+    df_out = df_out.drop_duplicates(subset="time")
+    
+    return df_out
 
     # 4. Sprzątanie i formatowanie tabeli
     
@@ -376,3 +406,4 @@ def upload_ftp(files):
 
 if __name__ == "__main__":
     main()
+
