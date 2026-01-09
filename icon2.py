@@ -134,13 +134,6 @@ def process_single_param(param, run_date, run_hour):
             backend_kwargs={'errors': 'ignore', 'indexpath': ''}
         )
 
-        # Wybór poziomu 850 hPa dla temperatury
-        if param == "t":
-            if 'isobaricInhPa' in ds.coords:
-                ds = ds.sel(isobaricInhPa=850, method="nearest")
-            elif 'pressure' in ds.coords:
-                ds = ds.sel(pressure=85000, method="nearest")  # w Pa
-
         # Wybór punktu
         if 'latitude' in ds.coords and 'longitude' in ds.coords:
             point = ds.sel(latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
@@ -252,8 +245,6 @@ def main():
         df["T2M [°C]"] = (df["t_2m"] - 273.15).round(1)
     if "td_2m" in df.columns:
         df["D2M [°C]"] = (df["td_2m"] - 273.15).round(1)
-    if "t_850" in df.columns:
-        df["T850 [°C]"] = (df["t_850"] - 273.15).round(1)
     if "pmsl" in df.columns:
         df["MSLP [hPa]"] = (df["pmsl"] / 100).round(1)
 
@@ -303,7 +294,7 @@ def main():
     # Finalne kolumny (dokładnie w kolejności, którą chciałeś)
     final_cols = [
         "Czas", "T+ (h)",
-        "T2M [°C]", "D2M [°C]", "T850 [°C]",
+        "T2M [°C]", "D2M [°C]",
         "MSLP [hPa]",
         "CL [%]", "CM [%]", "CH [%]", "CC [%]",
         "RRR [mm/3h]", "SNOW [cm]",
@@ -368,4 +359,5 @@ def upload_ftp(files):
 
 if __name__ == "__main__":
     main()
+
 
