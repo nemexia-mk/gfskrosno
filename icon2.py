@@ -24,7 +24,7 @@ KROSNO_LON = 21.77
 PARAMS = [
     "t_2m", "td_2m", "pmsl", "tot_prec", "snow_con", "h_snow",
     "clct", "clcl", "clcm", "clch", "u_10m", "v_10m", "vmax_10m",
-    "cape_ml", "cin_ml", "vis", "t"           # ← dodane: temperatura na poziomach (T850)
+    "cape_ml", "cin_ml", "vis"           # ← dodane: temperatura na poziomach (T850)
 ]
 
 RENAME_MAP = {
@@ -39,8 +39,8 @@ RENAME_MAP = {
     "clct": "clct", "clcl": "clcl", "clcm": "clcm", "clch": "clch",
     "cape_ml": "cape_ml", "cin_ml": "cin_ml",
     "csfwe": "snow_con", "lsfwe": "snow_con",
-    "vis": "vis",
-    "t": "t_850"                             # ← temperatura na poziomie ciśnienia
+    "vis": "vis"
+                           # ← temperatura na poziomie ciśnienia
 }
 
 # -----------------------
@@ -368,3 +368,4 @@ def upload_ftp(files):
 
 if __name__ == "__main__":
     main()
+
