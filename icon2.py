@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# icon2.py - Wersja Stabilna (Poprawione zarządzanie czasem)
+# icon2.py - Wersja Stabilna (Metoda rekonstrukcji DataFrame)
 
 import os
 import shutil
@@ -84,7 +84,7 @@ def process_single_param(param, run_date, run_hour):
     """
     1. Pobiera pliki TYLKO dla danego parametru.
     2. Otwiera je w xarray.
-    3. Zwraca DataFrame z serią czasową, poprawnie obsługując kolumny czasu.
+    3. Zwraca DataFrame z serią czasową, budując go od zera (bezpieczne dla nazw kolumn).
     """
     base_url = f"https://opendata.dwd.de/weather/nwp/icon-eu/grib/{run_hour.lower()}/{param}/"
     clean_temp() # Czyść przed startem
@@ -115,8 +115,6 @@ def process_single_param(param, run_date, run_hour):
 
     # 2. Pobieranie plików
     grib_files = []
-    
-    # Opcjonalnie: Limit plików dla testów, np. [:10]. Usuń slice, by pobrać wszystko.
     print(f"  ⬇️ Pobieranie {len(files_to_dl)} plików...")
     
     for fname in files_to_dl:
@@ -163,11 +161,12 @@ def process_single_param(param, run_date, run_hour):
         print(f"  ❌ Błąd xarray dla {param}: {e}")
         return None
 
-    # 4. Sprzątanie i formatowanie tabeli
+    # 4. Sprzątanie i rekonstrukcja tabeli (Fix dla 'time is not unique')
+    
+    # Znajdź kolumnę z danymi
     coords_cols = ['time', 'valid_time', 'step', 'latitude', 'longitude', 'lat', 'lon', 'surface', 'heightAboveGround', 'number', 'meanSea']
     data_col = None
     
-    # Znajdź właściwą kolumnę z danymi
     for col in df.columns:
         if col.lower() in RENAME_MAP:
             data_col = col
@@ -179,21 +178,37 @@ def process_single_param(param, run_date, run_hour):
 
     if not data_col: return None
 
-    # --- POPRAWKA KLUCZOWA (Unikanie duplikatu 'time') ---
-    # Jeśli mamy valid_time (czas prognozy) i time (start runu),
-    # usuwamy ten drugi, by uniknąć kolizji przy zmianie nazwy.
-    if "valid_time" in df.columns:
-        if "time" in df.columns:
-            df = df.drop(columns=["time"])
-        df = df.rename(columns={"valid_time": "time"})
-    # -----------------------------------------------------
-
-    # Tworzymy wynikowy DF
-    df_out = df[["time", data_col]].copy()
+    # --- REKONSTRUKCJA DATAFRAME ---
+    # Zamiast zmieniać nazwy (co powoduje kolizje), wyciągamy serie danych i budujemy nowy obiekt.
     
-    # Standaryzacja nazwy parametru
+    # 1. Ustalanie właściwej serii czasowej
+    time_series = None
+    
+    if "valid_time" in df.columns:
+        time_series = df["valid_time"]
+    elif "time" in df.columns:
+        # Jeśli 'time' jest zduplikowane, df['time'] zwraca DataFrame, a nie Series.
+        # Musimy wziąć pierwszą kolumnę, która jest faktycznym czasem.
+        raw_time = df["time"]
+        if isinstance(raw_time, pd.DataFrame):
+            time_series = raw_time.iloc[:, 0]
+        else:
+            time_series = raw_time
+    
+    if time_series is None:
+        print(f"  ⚠️ Nie znaleziono kolumny czasu dla {param}")
+        return None
+        
+    # 2. Wyciągnięcie danych wartości
+    val_series = df[data_col]
+    
+    # 3. Budowa czystej tabeli
     std_name = RENAME_MAP.get(data_col.lower(), param)
-    df_out = df_out.rename(columns={data_col: std_name})
+    
+    df_out = pd.DataFrame({
+        "time": time_series,
+        std_name: val_series
+    })
     
     # Usuwamy ewentualne duplikaty czasu
     df_out = df_out.drop_duplicates(subset="time")
@@ -221,8 +236,7 @@ def main():
             if final_df.empty:
                 final_df = df_param
             else:
-                # Teraz łączenie jest bezpieczne, bo w process_single_param
-                # zadbaliśmy o unikalność kolumny 'time'
+                # Teraz merge jest bezpieczny, bo df_param ma na pewno unikalną kolumnę 'time'
                 final_df = pd.merge(final_df, df_param, on="time", how="outer")
         
         clean_temp()
@@ -236,6 +250,7 @@ def main():
     # --- OBLICZENIA I KONWERSJE ---
     df = final_df.sort_values("time").reset_index(drop=True)
     
+    # Wypełnianie zerami
     cols_zero = ["tot_prec", "snow_con", "h_snow", "cape_ml", "u_10m", "v_10m"]
     for c in cols_zero:
         if c in df.columns: df[c] = df[c].fillna(0.0)
