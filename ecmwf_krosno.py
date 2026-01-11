@@ -89,20 +89,20 @@ COLUMN_MAPPING = {
     "time": "Czas",
     "temperature_2m": "T2M [°C]",
     "dew_point_2m": "D2M [°C]",
+    "temperature_850hPa": "T850 [°C]",
     "pressure_msl": "MSLP [hPa]",
-    "precipitation": "RRR [mm]",
-    "snowfall": "SNOW [cm]",
-    "cloud_cover": "CC [%]",
     "cloud_cover_low": "CL [%]",
     "cloud_cover_mid": "CM [%]",
     "cloud_cover_high": "CH [%]",
+    "cloud_cover": "CC [%]",
+    "precipitation": "RRR [mm]",
+    "snowfall": "SNOW [cm]",
     "wind_speed_10m": "WSPD [m/s]",
     "wind_direction_10m": "WDIR [°]",
     "wind_gusts_10m": "GUST [m/s]",
     "cape": "CAPE [J/kg]",
     "lifted_index": "LIFTED [°C]",
-    "visibility": "VIS [m]",
-    "temperature_850hPa": "T850 [°C]"
+    "visibility": "VIS [m]"
 }
 
 # -----------------------
