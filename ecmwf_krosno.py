@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # ecmwf_krosno_smart.py
-# Wersja: Smart Run Detection (06:30 / 18:30 UTC)
-# Automatycznie dobiera nazewnictwo pliku do aktualnego runu modelu ECMWF.
+# Wersja: Smart Run Detection + Natywne Tmax/Tmin
+# Zmieniona kolejność kolumn: T2M -> Tmax -> Tmin -> D2M...
 
 import os
 import requests
@@ -26,36 +26,24 @@ KROSNO_LON = 21.77
 # LOGIKA WYBORU RUNU (06:30 / 18:30 UTC)
 # -----------------------
 def get_run_info():
-    """
-    Ustala datę i godzinę RUNU modelu na podstawie aktualnego czasu UTC.
-    Zasada:
-    - < 06:30 UTC  -> Wczorajszy run 12Z
-    - 06:30-18:30  -> Dzisiejszy run 00Z
-    - > 18:30 UTC  -> Dzisiejszy run 12Z
-    """
     now_utc = datetime.utcnow()
     current_time = now_utc.time()
     
-    # Definicja punktów odcięcia
     cutoff_morning = dt_time(6, 30)
     cutoff_evening = dt_time(18, 30)
     
     if current_time < cutoff_morning:
-        # Jest wcześnie rano, pobieramy (teoretycznie) wczorajszą 12-stkę
         run_date = (now_utc - timedelta(days=1)).strftime("%Y%m%d")
         run_hour = "12"
     elif current_time < cutoff_evening:
-        # Środek dnia, mamy świeżą 00-kę
         run_date = now_utc.strftime("%Y%m%d")
         run_hour = "00"
     else:
-        # Wieczór, mamy dzisiejszą 12-stkę
         run_date = now_utc.strftime("%Y%m%d")
         run_hour = "12"
         
     return run_date, run_hour, now_utc
 
-# Obliczamy to na starcie
 RUN_DATE_STR, RUN_HOUR_STR, NOW_UTC = get_run_info()
 RUN_LABEL = f"{RUN_DATE_STR}_{RUN_HOUR_STR}"
 
@@ -75,10 +63,14 @@ HOURLY_VARS = [
     "cape", "lifted_index", "visibility", "temperature_850hPa"
 ]
 
+# Dodano parametry dzienne
+DAILY_VARS = ["temperature_2m_max", "temperature_2m_min"]
+
 PARAMS = {
     "latitude": KROSNO_LAT,
     "longitude": KROSNO_LON,
     "hourly": ",".join(HOURLY_VARS),
+    "daily": ",".join(DAILY_VARS),  # Pobieranie natywnych max/min
     "models": "ecmwf_ifs025",
     "timezone": "UTC",
     "wind_speed_unit": "ms",
@@ -149,14 +141,29 @@ def fetch_ecmwf_data():
         r.raise_for_status()
         data = r.json()
         
+        # 1. Dane godzinowe
         hourly_data = data.get('hourly', {})
         if not hourly_data:
             print("❌ API zwróciło pusty obiekt 'hourly'.")
             return pd.DataFrame()
-
+        
         df = pd.DataFrame(hourly_data)
         
-        # Wymuszenie typów numerycznych
+        # 2. Dane dzienne (Tmax, Tmin)
+        daily_data = data.get('daily', {})
+        if daily_data:
+            df_daily = pd.DataFrame(daily_data)
+            # Konwersja czasu na samą datę dla złączenia
+            df_daily["time"] = pd.to_datetime(df_daily["time"]).dt.date
+            df_daily.rename(columns={
+                "time": "Date",
+                "temperature_2m_max": "Tmax [°C]",
+                "temperature_2m_min": "Tmin [°C]"
+            }, inplace=True)
+        else:
+            df_daily = pd.DataFrame()
+
+        # Konwersja danych godzinowych
         for col in df.columns:
             if col == "time": continue
             df[col] = pd.to_numeric(df[col], errors='coerce')
@@ -164,7 +171,17 @@ def fetch_ecmwf_data():
         df.rename(columns=COLUMN_MAPPING, inplace=True)
         df["Czas"] = pd.to_datetime(df["Czas"])
         
-        # Oblicz T+ od momentu startu prognozy (a nie od daty runu, bo API zwraca future)
+        # Dodanie kolumny Date do głównego DF, aby połączyć z daily
+        df["Date"] = df["Czas"].dt.date
+        
+        # 3. Złączenie (Merge) - dodanie Tmax i Tmin do każdego wiersza
+        if not df_daily.empty:
+            df = df.merge(df_daily[["Date", "Tmax [°C]", "Tmin [°C]"]], on="Date", how="left")
+        else:
+            df["Tmax [°C]"] = np.nan
+            df["Tmin [°C]"] = np.nan
+
+        # Oblicz T+
         first_time = df["Czas"].iloc[0]
         df["T+ (h)"] = ((df["Czas"] - first_time).dt.total_seconds() / 3600).astype(int)
 
@@ -172,7 +189,8 @@ def fetch_ecmwf_data():
             df["VIS [km]"] = (df["VIS [m]"] / 1000).round(1)
             df.drop(columns=["VIS [m]"], inplace=True)
         
-        cols_round_1 = ["T2M [°C]", "D2M [°C]", "T850 [°C]", "MSLP [hPa]", "RRR [mm]", "GUST [m/s]", "WSPD [m/s]"]
+        # Zaokrąglenia
+        cols_round_1 = ["T2M [°C]", "D2M [°C]", "T850 [°C]", "MSLP [hPa]", "RRR [mm]", "GUST [m/s]", "WSPD [m/s]", "Tmax [°C]", "Tmin [°C]"]
         for c in cols_round_1:
             if c in df.columns: df[c] = df[c].round(1)
         
@@ -184,11 +202,26 @@ def fetch_ecmwf_data():
         df["PrecType"] = df.apply(lambda r: detect_precip_type(r.get("RRR [mm]"), r.get("T2M [°C]"), r.get("T850 [°C]")), axis=1)
         df["StormRisk"] = df.apply(lambda r: storm_risk_category(r.get("CAPE [J/kg]"), r.get("LIFTED [°C]")), axis=1)
 
-        keep_cols = list(COLUMN_MAPPING.values()) + ["VIS [km]", "T+ (h)", "LCL_m", "PrecType", "StormRisk"]
-        existing_cols = [c for c in keep_cols if c in df.columns]
-        first_cols = ["Czas", "T+ (h)"]
-        other_cols = [c for c in existing_cols if c not in first_cols]
-        df = df[first_cols + other_cols]
+        # 4. Ustalenie kolejności kolumn
+        # Lista pożądana: T2M, Tmax, Tmin, D2M, T850...
+        desired_order = [
+            "Czas", "T+ (h)", 
+            "T2M [°C]", "Tmax [°C]", "Tmin [°C]", "D2M [°C]", "T850 [°C]",
+            "MSLP [hPa]",
+            "RRR [mm]", "SNOW [cm]", "PrecType",
+            "WSPD [m/s]", "GUST [m/s]", "WDIR [°]",
+            "CC [%]", "CL [%]", "CM [%]", "CH [%]",
+            "CAPE [J/kg]", "LIFTED [°C]", "StormRisk",
+            "VIS [km]", "LCL_m", "Date"
+        ]
+        
+        # Filtrujemy tylko te kolumny, które faktycznie istnieją w DF
+        final_cols = [c for c in desired_order if c in df.columns]
+        
+        # Dodajemy ewentualne pozostałe, których nie ma w liście desired_order (dla bezpieczeństwa)
+        remaining = [c for c in df.columns if c not in final_cols]
+        
+        df = df[final_cols + remaining]
 
         return df
 
@@ -198,16 +231,21 @@ def fetch_ecmwf_data():
 
 def process_daily(df):
     if df.empty: return pd.DataFrame()
-    df["Date"] = df["Czas"].dt.date
+    
+    # Grupowanie
     daily = df.groupby("Date").agg({
-        "T2M [°C]": ["max", "min", "mean"],
+        "T2M [°C]": ["mean"],       # Średnia z godzinowych
+        "Tmax [°C]": ["first"],     # Bierzemy natywną wartość (jest taka sama dla całego dnia w wierszach)
+        "Tmin [°C]": ["first"],     # Bierzemy natywną wartość
         "RRR [mm]": "sum",
         "WSPD [m/s]": "mean",
         "MSLP [hPa]": "mean",
         "CAPE [J/kg]": "max",
         "VIS [km]": "min"
     }).reset_index()
-    daily.columns = ["Date", "Tmax", "Tmin", "T_mean", "Suma_opadu", "Wsp_sred", "Pres_sred", "CAPE_max", "VIS_min"]
+    
+    # Spłaszczenie MultiIndex
+    daily.columns = ["Date", "T_mean", "Tmax", "Tmin", "Suma_opadu", "Wsp_sred", "Pres_sred", "CAPE_max", "VIS_min"]
     
     if "LIFTED [°C]" in df.columns:
         daily["LIFTED_min"] = df.groupby("Date")["LIFTED [°C]"].min().values
@@ -215,6 +253,7 @@ def process_daily(df):
 
     td_mean = df.groupby("Date")["D2M [°C]"].mean().reset_index(name="Td_mean")
     daily = daily.merge(td_mean, on="Date", how="left")
+    
     daily["LCL_m"] = daily.apply(lambda r: lcl_height_m(r["T_mean"], r["Td_mean"]), axis=1)
     daily["StormRisk"] = daily.apply(lambda r: storm_risk_category(r["CAPE_max"], r["LIFTED_min"]), axis=1)
     
@@ -224,6 +263,7 @@ def process_daily(df):
     
     for c in ["Tmax", "Tmin", "Suma_opadu", "Wsp_sred", "Pres_sred", "T_mean", "Td_mean", "LCL_m"]:
         if c in daily.columns: daily[c] = daily[c].round(1)
+        
     return daily
 
 # -----------------------
@@ -234,30 +274,33 @@ def save_outputs(df, daily):
         print("⚠️ Pusty DataFrame, pomijam zapis.")
         return []
 
-    # Nazwa pliku bazuje na RUN_LABEL (np. 20260105_00)
+    # Usuwamy kolumnę techniczną 'Date' z głównego pliku, żeby nie śmieciła,
+    # ale robimy to na kopii do zapisu, bo 'Date' jest potrzebna w process_daily (choć tutaj już po procesowaniu)
+    df_save = df.drop(columns=["Date"], errors='ignore')
+
     filename_base = f"krosno_ecmwf_{RUN_LABEL}"
     xlsx_path = os.path.join(OUTPUT_DIR, f"{filename_base}.xlsx")
     
     with pd.ExcelWriter(xlsx_path, engine="xlsxwriter") as writer:
-        df.to_excel(writer, sheet_name="prognoza", index=False)
+        df_save.to_excel(writer, sheet_name="prognoza", index=False)
         daily.to_excel(writer, sheet_name="dzienna_prognoza", index=False)
         workbook = writer.book
         worksheet = writer.sheets["prognoza"]
         
-        if "PrecType" in df.columns:
-            col_idx = df.columns.get_loc("PrecType")
-            rng = f"{chr(65+col_idx)}2:{chr(65+col_idx)}{len(df)+1}"
+        if "PrecType" in df_save.columns:
+            col_idx = df_save.columns.get_loc("PrecType")
+            rng = f"{chr(65+col_idx)}2:{chr(65+col_idx)}{len(df_save)+1}"
             for ptype, color in PREC_TYPE_TO_COLOR.items():
                 fmt = workbook.add_format({'bg_color': color, 'border': 1})
                 worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': f'"{ptype}"', 'format': fmt})
         
-        for i, col in enumerate(df.columns):
+        for i, col in enumerate(df_save.columns):
             worksheet.set_column(i, i, 12)
 
     print(f"\n✅ Excel ECMWF zapisany: {xlsx_path}")
 
     csv_path = os.path.join(OUTPUT_DIR, f"{filename_base}.csv")
-    df.to_csv(csv_path, index=False, encoding='utf-8')
+    df_save.to_csv(csv_path, index=False, encoding='utf-8')
     print(f"✅ CSV ECMWF zapisany: {csv_path}")
 
     # Meteorogram
@@ -271,6 +314,7 @@ def save_outputs(df, daily):
         
         axes[0].plot(time_axis, df_plot["T2M [°C]"], color="#D62728", label="T2M")
         axes[0].plot(time_axis, df_plot["D2M [°C]"], color="#1F77B4", ls="--", label="D2M")
+        # Można opcjonalnie dorysować Tmax/Tmin jako punkty, ale zostawmy klasyczny wygląd
         axes[0].set_ylabel("°C"); axes[0].legend(loc="upper left"); axes[0].grid(True, ls=":")
         
         axes[1].bar(time_axis, df_plot["RRR [mm]"].fillna(0), width=0.04, color="#1F77B4", label="Opad/h")
@@ -298,7 +342,6 @@ def save_outputs(df, daily):
 
         axes[-1].xaxis.set_major_formatter(DateFormatter("%d.%m\n%H"))
         
-        # TYTUŁ ZAWIERA RUN
         plt.suptitle(f"ECMWF 0.25° Krosno | RUN: {RUN_LABEL}Z", weight="bold", fontsize=14)
         plt.savefig(out_png, dpi=150, bbox_inches="tight")
         plt.close(fig)
@@ -334,7 +377,7 @@ def upload_to_ftp(files):
                         ftp.mkd(arch_dir); ftp.cwd(arch_dir)
                     
                     f.seek(0)
-                    ftp.storbinary(f"STOR {fname}", f) # fname ma już RUN w nazwie
+                    ftp.storbinary(f"STOR {fname}", f)
                     print(f"📤 Archiwum: {fname}")
                     ftp.cwd("/stacja.meteo-krosno.pl/")
                 else:
