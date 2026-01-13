@@ -74,7 +74,7 @@ PARAMS = {
     "models": "ecmwf_ifs025",
     "timezone": "UTC",
     "wind_speed_unit": "ms",
-    "forecast_days": 10
+    "forecast_days": 15
 }
 
 COLUMN_MAPPING = {
