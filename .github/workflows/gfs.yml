@@ -39,7 +39,7 @@ jobs:
         run: |
           python ecmwf_krosno.py
           
-      - name: Run ICON script
+      - name: Run GFS script
         env:
           FTP_HOST: "corn.cba.pl"
           FTP_USER: "nemexia"
