@@ -32,10 +32,10 @@ KROSNO_LON = 21.77
 now = datetime.utcnow()
 
 # Definicja okien czasowych (UTC)
-t_0120 = time(1, 20)
-t_0520 = time(5, 20)
-t_1120 = time(11, 20)
-t_1720 = time(17, 20)
+t_0120 = time(0, 20)
+t_0520 = time(4, 20)
+t_1120 = time(10, 20)
+t_1720 = time(16, 20)
 
 current_time = now.time()
 
