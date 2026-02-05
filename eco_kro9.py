@@ -1,9 +1,9 @@
 import requests
-import time
 import pandas as pd
 import os
 from ftplib import FTP, error_perm
 from datetime import datetime, timedelta, timezone
+import io
 
 # ────────────────────────────────────────────────
 # KONFIGURACJA
@@ -11,30 +11,24 @@ from datetime import datetime, timedelta, timezone
 APP_KEY = "CCC4084F1EA68A5D31DF36CD567E9C40"
 API_KEY = "9ec822a2-8fd2-44dc-902c-2d574bd8850f"
 
-# Konfiguracja FTP (Uzupełnij dane lub upewnij się, że są w zmiennych środowiskowych)
+# Konfiguracja FTP
 FTP_HOST_CFG = os.getenv("FTP_HOST", "twoj_host_ftp.pl") 
 FTP_USER_CFG = os.getenv("FTP_USER", "uzytkownik")
 FTP_PASS_CFG = os.getenv("FTP_PASS", "haslo")
-FTP_DIR = "stacja.meteo-krosno.pl/"  # Ścieżka na serwerze (np. "/public_html/pogoda/" lub "/" dla głównego)
+FTP_DIR = "stacja.meteo-krosno.pl/"  # Ścieżka na serwerze
 
 STATIONS = {
     "Turaszowka": "E8:DB:84:99:BF:2B", # eco_krosno.csv
     "Lesniowka": "E8:68:E7:12:8B:9B"   # eco_lesniowka.csv
 }
 
-# Pliki lokalne (append + nowe kolumny)
-LOCAL_FILES = {
+# Nazwy plików (lokalne i zdalne takie same)
+FILES_MAP = {
     "Turaszowka": "eco_krosno.csv",
     "Lesniowka": "eco_lesniowka.csv"
 }
 
-# Remote na FTP (nazwy plików na serwerze)
-REMOTE_FILES = {
-    "Turaszowka": "eco_krosno.csv",
-    "Lesniowka": "eco_lesniowka.csv"
-}
-
-# Wszystkie parametry
+# Pola API
 FIELDS = (
     "outdoor.temperature,outdoor.feels_like,outdoor.app_temp,outdoor.dew_point,outdoor.vpd,outdoor.humidity,"
     "indoor.temperature,indoor.humidity,indoor.dew_point,indoor.feels_like,indoor.app_tempin,"
@@ -49,7 +43,7 @@ FIELDS = (
 )
 
 # ────────────────────────────────────────────────
-# FUNKCJE POMOCNICZE
+# FUNKCJE POMOCNICZE (KONWERSJE)
 # ────────────────────────────────────────────────
 def safe_float(v):
     if v is None or v == '-': return None
@@ -78,25 +72,92 @@ def inHg_to_hPa(p):
     return round(p * 33.8639, 1) if p is not None else None
 
 # ────────────────────────────────────────────────
-# FUNKCJA POBIERANIA (ostatnia pełna doba)
+# 1. POBIERANIE Z FTP
 # ────────────────────────────────────────────────
-def fetch_last_full_day(mac, station_name):
-    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    yesterday = today - timedelta(days=1)
+def download_ftp_file(remote_filename, local_filename):
+    print(f"--- [FTP DOWNLOAD] Próba pobrania: {remote_filename} ---")
+    try:
+        host = FTP_HOST_CFG
+        if not host or "twoj_host" in host:
+            print(" [INFO] Brak konfiguracji FTP. Używam tylko pliku lokalnego (jeśli istnieje).")
+            return False
+
+        ftp = FTP(host)
+        ftp.login(FTP_USER_CFG, FTP_PASS_CFG)
+        
+        try:
+            ftp.cwd(FTP_DIR)
+        except:
+            print(f" [INFO] Nie udało się wejść do katalogu {FTP_DIR}, próbuję w głównym.")
+
+        # Pobieranie
+        with open(local_filename, 'wb') as f:
+            ftp.retrbinary(f"RETR {remote_filename}", f.write)
+        
+        ftp.quit()
+        print(f" [OK] Pobrano plik z FTP: {local_filename}")
+        return True
+    except error_perm as e:
+        print(f" [INFO] Plik {remote_filename} nie istnieje na serwerze (błąd 550?). Utworzę nowy. Info: {e}")
+        return False
+    except Exception as e:
+        print(f" [BLAD] Błąd pobierania FTP: {e}")
+        return False
+
+# ────────────────────────────────────────────────
+# 2. SPRAWDZANIE CZY DATA ISTNIEJE
+# ────────────────────────────────────────────────
+def check_if_date_exists(csv_file, target_date_str):
+    """
+    Sprawdza czy w pliku CSV istnieje już jakikolwiek wpis z daną datą (YYYY-MM-DD).
+    """
+    if not os.path.exists(csv_file):
+        return False
     
-    start_dt = yesterday
-    end_dt = today
+    try:
+        print(f" [CHECK] Analizuję plik {csv_file} pod kątem daty {target_date_str}...")
+        # Czytamy tylko kolumnę z datą, żeby było szybciej
+        df = pd.read_csv(csv_file, usecols=['timestamp_utc'])
+        
+        # Konwersja na datetime, obsługa błędów
+        df['timestamp_utc'] = pd.to_datetime(df['timestamp_utc'], errors='coerce')
+        
+        # Wyciągamy same daty (YYYY-MM-DD) jako stringi
+        existing_dates = df['timestamp_utc'].dt.strftime('%Y-%m-%d').unique()
+        
+        if target_date_str in existing_dates:
+            print(f" [INFO] Znaleziono dane dla {target_date_str}! Dzień jest już kompletny/obecny.")
+            return True
+        else:
+            print(f" [INFO] Brak danych dla {target_date_str}. Można pobierać.")
+            return False
+            
+    except Exception as e:
+        print(f" [WARN] Problem przy sprawdzaniu CSV (może plik pusty?): {e}. Zakładam, że danych nie ma.")
+        return False
+
+# ────────────────────────────────────────────────
+# 3. POBIERANIE Z API (ŚCIŚLE OKREŚLONA DOBA)
+# ────────────────────────────────────────────────
+def fetch_api_data(mac, station_name, target_date_obj):
+    """
+    Pobiera dane dokładnie od 00:00:00 do 23:59:59 wskazanego dnia.
+    """
+    # Formatowanie daty start i koniec (ściśle ta sama doba)
+    start_str = target_date_obj.strftime("%Y-%m-%d 00:00:00")
+    end_str = target_date_obj.strftime("%Y-%m-%d 23:59:59")
+    
+    print(f"--- [API FETCH] {station_name} ---")
+    print(f" Zakres zapytania: {start_str} -> {end_str}")
     
     params = {
         "application_key": APP_KEY,
         "api_key": API_KEY,
         "mac": mac,
-        "start_date": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
-        "end_date": end_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "start_date": start_str,
+        "end_date": end_str,
         "call_back": FIELDS
     }
-    
-    print(f"[{station_name}] Ostatnia pełna doba: {params['start_date']} → {params['end_date']}")
     
     try:
         r = requests.get("https://api.ecowitt.net/api/v3/device/history", params=params, timeout=30)
@@ -104,47 +165,47 @@ def fetch_last_full_day(mac, station_name):
         data = r.json()
         
         if data.get("code") != 0:
-            print(f" Błąd API: {data.get('msg')}")
+            print(f" [BLAD] API Code: {data.get('code')} Msg: {data.get('msg')}")
             return None
             
         hist = data.get("data", {})
         if not hist:
-            print(" Brak danych")
+            print(" [INFO] Pusty obiekt 'data' w odpowiedzi API.")
             return None
             
-        # Timestampy z dict list (sprawdzamy temperaturę jako referencję)
+        # Pobieranie listy timestampów z temperatury zewnętrznej jako bazy
         temp_list = hist.get("outdoor", {}).get("temperature", {}).get("list", {})
         timestamps = sorted([int(k) for k in temp_list.keys() if k.isdigit()])
         
         if not timestamps:
-            print(" Brak rekordów")
+            print(" [INFO] Brak rekordów (timestamps) w zadanym zakresie.")
             return None
             
+        print(f" [OK] Pobrano {len(timestamps)} rekordów z API.")
+        
         rows = []
         for ts in timestamps:
             str_ts = str(ts)
+            # Konwersja TS na UTC String
             row = {"timestamp_utc": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(), "station": station_name}
             
             def get_val(g, s):
                 return hist.get(g, {}).get(s, {}).get("list", {}).get(str_ts)
             
-            # PARSOWANIE DANYCH
+            # --- PARSOWANIE DANYCH ---
             row["out_temp_c"] = f_to_c(get_val("outdoor", "temperature"))
             row["out_hum_pct"] = safe_float(get_val("outdoor", "humidity"))
             row["feels_like_c"] = f_to_c(get_val("outdoor", "feels_like"))
             row["app_temp_c"] = f_to_c(get_val("outdoor", "app_temp"))
             row["dew_point_c"] = f_to_c(get_val("outdoor", "dew_point"))
             row["vpd"] = safe_float(get_val("outdoor", "vpd"))
-            
             row["indoor_temp_c"] = f_to_c(get_val("indoor", "temperature"))
             row["indoor_hum_pct"] = safe_float(get_val("indoor", "humidity"))
             row["indoor_dew_c"] = f_to_c(get_val("indoor", "dew_point"))
             row["indoor_feels_c"] = f_to_c(get_val("indoor", "feels_like"))
             row["indoor_app_c"] = f_to_c(get_val("indoor", "app_tempin"))
-            
             row["solar_wm2"] = safe_float(get_val("solar_and_uvi", "solar"))
             row["uvi"] = safe_int(get_val("solar_and_uvi", "uvi"))
-            
             row["rain_rate_mmh"] = in_to_mm(get_val("rainfall", "rain_rate"))
             row["rain_daily_mm"] = in_to_mm(get_val("rainfall", "daily"))
             row["rain_event_mm"] = in_to_mm(get_val("rainfall", "event"))
@@ -153,18 +214,14 @@ def fetch_last_full_day(mac, station_name):
             row["rain_weekly_mm"] = in_to_mm(get_val("rainfall", "weekly"))
             row["rain_monthly_mm"] = in_to_mm(get_val("rainfall", "monthly"))
             row["rain_yearly_mm"] = in_to_mm(get_val("rainfall", "yearly"))
-            
             row["wind_kmh"] = mph_to_kmh(get_val("wind", "wind_speed"))
             row["gust_kmh"] = mph_to_kmh(get_val("wind", "wind_gust"))
             row["wind_dir"] = safe_float(get_val("wind", "wind_direction"))
             row["wind_10min_dir"] = safe_float(get_val("wind", "10_minute_average_wind_direction"))
-            
             row["pressure_rel_hpa"] = inHg_to_hPa(get_val("pressure", "relative"))
             row["pressure_abs_hpa"] = inHg_to_hPa(get_val("pressure", "absolute"))
-            
             row["ch4_temp_c"] = f_to_c(get_val("temp_and_humidity_ch4", "temperature"))
             row["ch4_hum"] = safe_float(get_val("temp_and_humidity_ch4", "humidity"))
-            
             row["batt_out"] = safe_int(get_val("battery", "outdoor_t_rh_sensor"))
             row["batt_wind"] = safe_float(get_val("battery", "wind_sensor"))
             row["batt_rain"] = safe_float(get_val("battery", "rainfall_sensor"))
@@ -173,106 +230,114 @@ def fetch_last_full_day(mac, station_name):
             row["batt_ch2"] = safe_float(get_val("battery", "temperature_sensor_ch2"))
             row["batt_ch3"] = safe_float(get_val("battery", "temperature_sensor_ch3"))
             row["batt_lds"] = safe_float(get_val("battery", "ldsbatt_1"))
-            
             row["ch1_temp_c"] = f_to_c(get_val("temp_ch1", "temperature"))
             row["ch2_temp_c"] = f_to_c(get_val("temp_ch2", "temperature"))
             row["ch3_temp_c"] = f_to_c(get_val("temp_ch3", "temperature"))
-            
             row["lds_air_ft"] = safe_float(get_val("ch_lds1", "air_ch1"))
             row["lds_depth_ft"] = safe_float(get_val("ch_lds1", "depth_ch1"))
             row["lds_heat"] = safe_int(get_val("ch_lds1", "ldsheat_ch1"))
             
             rows.append(row)
             
-        if rows:
-            print(f" → {len(rows)} rekordów")
-            return pd.DataFrame(rows)
-        return None
+        return pd.DataFrame(rows)
         
     except Exception as e:
-        print(f" Błąd: {e}")
+        print(f" [BLAD] Wyjątek podczas API request: {e}")
         return None
 
 # ────────────────────────────────────────────────
-# UPLOAD FTP
+# 4. UPLOAD FTP
 # ────────────────────────────────────────────────
-def upload_ftp(local_file, remote_file):
+def upload_ftp_file(local_file, remote_file):
+    print(f"--- [FTP UPLOAD] Wysyłanie: {local_file} -> {remote_file} ---")
     try:
         host = FTP_HOST_CFG
-        user = FTP_USER_CFG
-        passwd = FTP_PASS_CFG
-        
-        # Sprawdzamy czy dane logowania nie są domyślne/puste
         if not host or "twoj_host" in host:
-            print(" Brak poprawnych danych FTP – pomijam upload")
+            print(" [INFO] Brak konfiguracji FTP. Pomijam upload.")
             return
 
-        # POPRAWKA 1: Używamy FTP() bezpośrednio, a nie ftplib.FTP()
         ftp = FTP(host)
-        ftp.login(user, passwd)
+        ftp.login(FTP_USER_CFG, FTP_PASS_CFG)
         
-        # POPRAWKA 2: Używamy zdefiniowanego FTP_DIR
+        # Ustawienie katalogu, jeśli trzeba utwórz
         try:
             ftp.cwd(FTP_DIR)
-        except error_perm as e:
-            if '550' in str(e):
-                # Folder nie istnieje – utwórz
-                try:
-                    ftp.mkd(FTP_DIR)
-                    ftp.cwd(FTP_DIR)
-                    print(f" Utworzono folder na FTP: {FTP_DIR}")
-                except Exception as mk_e:
-                    print(f" Błąd tworzenia folderu: {mk_e}")
-                    ftp.quit()
-                    return
-            else:
-                print(f" Błąd cwd: {e}")
-                ftp.quit()
-                return
-        
+        except error_perm:
+            try:
+                ftp.mkd(FTP_DIR)
+                ftp.cwd(FTP_DIR)
+            except:
+                pass # Może nie mamy uprawnień, spróbujmy w root
+
         with open(local_file, 'rb') as f:
             ftp.storbinary(f"STOR {remote_file}", f)
         
         ftp.quit()
-        print(f" Upload OK: {remote_file}")
-        
+        print(f" [SUKCES] Plik wysłany i nadpisany na FTP.")
     except Exception as e:
-        print(f" FTP błąd: {e}")
+        print(f" [BLAD] Upload FTP nieudany: {e}")
 
 # ────────────────────────────────────────────────
-# GŁÓWNA LOGIKA
+# GŁÓWNA LOGIKA (MAIN)
 # ────────────────────────────────────────────────
 if __name__ == "__main__":
+    print("\n================ START SKRYPTU ================")
+    
+    # 1. Określamy cel: pełna WCZORAJSZA doba (od północy do północy)
+    # Jeśli skrypt uruchamiasz 5 lutego, target to 4 lutego 00:00:00 - 23:59:59
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
+    target_date_str = yesterday.strftime("%Y-%m-%d") # Np. "2026-02-04"
+    
+    print(f" Data docelowa do pobrania: {target_date_str}")
+    
     for station_name, mac in STATIONS.items():
-        df_new = fetch_last_full_day(mac, station_name)
+        filename = FILES_MAP[station_name]
+        print(f"\n >>> Przetwarzanie stacji: {station_name} [{filename}]")
+        
+        # A. POBIERZ AKTUALNY PLIK Z FTP (żeby mieć do czego dopisać)
+        download_ftp_file(filename, filename)
+        
+        # B. SPRAWDŹ CZY MAMY JUŻ DANE Z TEGO DNIA
+        if check_if_date_exists(filename, target_date_str):
+            print(f" [SKIP] Dane dla {target_date_str} już są w pliku. Przechodzę do następnej stacji.")
+            continue
+        
+        # C. POBIERZ DANE Z API (jeśli ich nie ma)
+        df_new = fetch_api_data(mac, station_name, yesterday)
         
         if df_new is None or df_new.empty:
+            print(f" [INFO] Brak nowych danych z API dla {station_name}. Nic nie robię.")
             continue
             
-        csv_file = LOCAL_FILES[station_name]
-        
-        # Merge z istniejącym CSV
-        if os.path.exists(csv_file):
-            try:
-                df_old = pd.read_csv(csv_file)
+        # D. DOPISZ (APPEND) DO PLIKU LOKALNEGO
+        try:
+            if os.path.exists(filename):
+                print(f" [MERGE] Dopisuję {len(df_new)} wierszy do istniejącego pliku.")
+                df_old = pd.read_csv(filename)
+                
+                # Ujednolicenie kolumn dat
                 df_old['timestamp_utc'] = pd.to_datetime(df_old['timestamp_utc'])
                 df_new['timestamp_utc'] = pd.to_datetime(df_new['timestamp_utc'])
                 
+                # Łączenie
                 df_combined = pd.concat([df_old, df_new], ignore_index=True)
+                
+                # Sortowanie i usuwanie ewentualnych duplikatów (na wypadek częściowych danych)
                 df_combined.drop_duplicates(subset=['timestamp_utc', 'station'], keep='last', inplace=True)
                 df_combined.sort_values('timestamp_utc', inplace=True)
-            except Exception as e:
-                print(f" Błąd merge: {e} – nadpisuję")
+            else:
+                print(" [NEW] Tworzę nowy plik lokalny.")
                 df_combined = df_new
-        else:
-            df_combined = df_new
             
-        # Zapisz
-        df_combined.to_csv(csv_file, index=False)
-        print(f"Zapisano {len(df_combined)} wierszy do {csv_file}")
-        
-        # Upload na FTP
-        upload_ftp(csv_file, REMOTE_FILES[station_name])
+            # Zapisz
+            df_combined.to_csv(filename, index=False)
+            print(f" [SAVE] Zapisano plik lokalnie. Razem wierszy: {len(df_combined)}")
+            
+            # E. WYŚLIJ ZAKTUALIZOWANY PLIK NA FTP
+            upload_ftp_file(filename, filename)
+            
+        except Exception as e:
+            print(f" [CRITICAL] Błąd operacji na plikach: {e}")
 
-    print("\nKoniec – ostatnia pełna doba pobrana i wysłana.")
-
+    print("\n================ KONIEC ================")
