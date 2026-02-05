@@ -2,7 +2,7 @@ import requests
 import time
 import pandas as pd
 import os
-import ftplib
+from ftplib import FTP, error_perm
 from datetime import datetime, timedelta, timezone
 
 # ────────────────────────────────────────────────
