@@ -15,7 +15,7 @@ API_KEY = "9ec822a2-8fd2-44dc-902c-2d574bd8850f"
 FTP_HOST_CFG = os.getenv("FTP_HOST", "twoj_host_ftp.pl") 
 FTP_USER_CFG = os.getenv("FTP_USER", "uzytkownik")
 FTP_PASS_CFG = os.getenv("FTP_PASS", "haslo")
-FTP_DIR = "/"  # Ścieżka na serwerze
+FTP_DIR = "stacja.meteo-krosno.pl/"  # Ścieżka na serwerze
 
 STATIONS = {
     "Turaszowka": "E8:DB:84:99:BF:2B", # eco_krosno.csv
@@ -340,3 +340,4 @@ if __name__ == "__main__":
             print(f" [CRITICAL] Błąd operacji na plikach: {e}")
 
     print("\n================ KONIEC ================")
+
