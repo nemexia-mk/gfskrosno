@@ -4,7 +4,6 @@ import pandas as pd
 import os
 import ftplib
 from datetime import datetime, timedelta, timezone
-from ftplib import error_perm
 
 # ────────────────────────────────────────────────
 # KONFIGURACJA
@@ -25,7 +24,6 @@ REMOTE_FILES = {
     "Turaszowka": "eco_krosno.csv",
     "Lesniowka": "eco_lesniowka.csv"
 }
-FTP_DIR = "/stacja.meteo-krosno.pl/"  # Domyślny folder na FTP (jak w gfs_krosno.py)
 # Wszystkie parametry + temp_ch1/2/3 na końcu
 FIELDS = (
     "outdoor.temperature,outdoor.feels_like,outdoor.app_temp,outdoor.dew_point,outdoor.vpd,outdoor.humidity,"
