@@ -9,10 +9,10 @@ import os
 
 # --- KONFIGURACJA (Maskowanie dla GitHub Actions) ---
 FTP_HOST_CFG = os.getenv("FTP_HOST", "corn.cba.pl") 
-FTP_USER_CFG = os.getenv("FTP_USER", "stacja2@stacja.meteo-krosno.pl")
-FTP_PASS_CFG = os.getenv("FTP_PASS", "Mateusz07")
-FTP_DIR = "stacja.meteo-krosno.pl/"  # Ścieżka bazowa na serwerze
-FILE_NAME = "zbiorczy.csv"           # Nazwa pliku
+FTP_USER_CFG = os.getenv("FTP_USER")
+FTP_PASS_CFG = os.getenv("FTP_PASS")
+FTP_DIR = "/"  # Ścieżka bazowa na serwerze
+FILE_NAME = "zbiorczy.csv"     # Nazwa pliku
 WMO_ID = '12670'
 
 def safe_get(lst, idx, default=''):
