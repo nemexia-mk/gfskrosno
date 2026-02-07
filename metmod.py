@@ -11,7 +11,7 @@ import os
 FTP_HOST_CFG = os.getenv("FTP_HOST", "corn.cba.pl") 
 FTP_USER_CFG = os.getenv("FTP_USER")
 FTP_PASS_CFG = os.getenv("FTP_PASS")
-FTP_DIR = "/"  # Ścieżka bazowa na serwerze
+FTP_DIR = "stacja.meteo-krosno.pl/"  # Ścieżka bazowa na serwerze
 FILE_NAME = "zbiorczy.csv"     # Nazwa pliku
 WMO_ID = '12670'
 
