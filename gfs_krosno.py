@@ -28,32 +28,46 @@ RIGHT_LON = 22.01
 KROSNO_LAT = 49.69
 KROSNO_LON = 21.77
 
-# --- LOGIKA DATY I GODZINY RUNU (POPRAWIONA) ---
+# -----------------------
+# LOGIKA DATY I GODZINY RUNU GFS – POPRAWIONA WERSJA
+# -----------------------
 now = datetime.utcnow()
-
-# Definicja okien czasowych (UTC)
-t_0120 = time(0, 20)
-t_0520 = time(4, 20)
-t_1120 = time(10, 20)
-t_1720 = time(16, 20)
-
 current_time = now.time()
 
-if t_0120 <= current_time < t_0520:
-    # Okno dla runu 18Z (z poprzedniego dnia!)
-    # Jeśli jest np. 11.01 godz 02:00, to run 18Z był 10.01
+print(f"Aktualny czas UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+
+# Okna czasowe, w których dany run jest już zwykle dostępny na NOMADS
+if current_time >= time(22, 0) or current_time < time(5, 0):
+    # === RUN 18Z (z poprzedniego dnia kalendarzowego) ===
     RUN_HOUR = "18"
-    RUN_DATE = (now - timedelta(days=1)).strftime("%Y%m%d")
-elif t_0520 <= current_time < t_1120:
+    # Jeśli jest po 22:00, to run 18Z jest z dzisiejszego dnia (kalendarzowo)
+    # Jeśli jest przed 5:00, to run 18Z jest z wczoraj
+    if current_time >= time(22, 0):
+        RUN_DATE = now.strftime("%Y%m%d")
+    else:
+        RUN_DATE = (now - timedelta(days=1)).strftime("%Y%m%d")
+    
+    print(f"Wybrano run 18Z z dnia {RUN_DATE}")
+
+elif time(5, 0) <= current_time < time(10, 30):
+    # === RUN 00Z ===
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
-elif t_1120 <= current_time < t_1720:
+    print(f"Wybrano run 00Z z dnia {RUN_DATE}")
+
+elif time(10, 30) <= current_time < time(16, 30):
+    # === RUN 06Z ===
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
+    print(f"Wybrano run 06Z z dnia {RUN_DATE}")
+
 else:
-    # Okno popołudniowe/wieczorne
+    # === RUN 12Z (16:30 – 22:00) ===
     RUN_HOUR = "12"
     RUN_DATE = now.strftime("%Y%m%d")
+    print(f"Wybrano run 12Z z dnia {RUN_DATE}")
+
+CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
 
 CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
 BASE_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
