@@ -250,13 +250,14 @@ def process_local_gribs(forecast_hours):
             u_storm, v_storm = estimate_storm_motion(u10, v10, u500, v500)
             srh_01  = calc_srh_01(u10, v10, u925, v925, u_storm, v_storm)
 
-            # Nowe indeksy
-            tt_index = calc_total_totals(t850, td850, t500)
             brn = calc_brn(cape, dls)
 
-            prob = calc_storm_prob(cape, cin, li, dls, dls_01, srh_3km, srh_01, pwat, lcl, lr_700_500, tt_index, brn)
+            prob = calc_storm_prob(cape, cin, li, dls, dls_01, srh_3km, srh_01, pwat, lcl, lr_700_500, brn)
             supercell_risk = calc_supercell_risk(cape, dls, srh_3km, brn, li, dls_01, srh_01)
             hail = estimate_hail_size(cape, lr_700_500, dls)
+
+            # Pokazuj ryzyko superkomórki tylko gdy jest szansa na burzę
+            supercell_display = supercell_risk if prob > 0 else "-"
 
             rows.append({
                 "Czas": datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh),
@@ -269,13 +270,12 @@ def process_local_gribs(forecast_hours):
                 "DLS 0-1km [m/s]": round(dls_01, 1),
                 "SRH 0-3km [m²/s²]": int(round(srh_3km, 0)) if not np.isnan(srh_3km) else 0,
                 "SRH 0-1km approx [m²/s²]": round(srh_01, 1) if not np.isnan(srh_01) else np.nan,
-                "Total Totals [K]": round(tt_index, 1) if not np.isnan(tt_index) else np.nan,
                 "BRN": round(brn, 1) if not np.isnan(brn) else np.nan,
                 "LR 700-500 [C/km]": round(lr_700_500, 1),
                 "0°C Height [m]": round(zero_deg_h, 0),
                 "PWAT [mm]": round(pwat, 1),
                 "LCL [m]": round(lcl, 0),
-                "Ryzyko Superkomórki [%]": supercell_risk,
+                "Ryzyko Superkomórki [%]": supercell_display,
                 "Prob Burzy [%]": prob,
                 "Grad [cm]": hail
             })
@@ -291,7 +291,7 @@ def process_local_gribs(forecast_hours):
 
 
 # Algorytmy
-def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, tt, brn):
+def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn):
     """Ulepszona funkcja prawdopodobieństwa burzy — bierze pod uwagę znacznie więcej parametrów"""
     if np.isnan(cape) or cape < 50:
         return 0.0
@@ -365,8 +365,6 @@ def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, tt, 
             score += 3
 
     # Indeksy klasyczne (jeśli dostępne)
-    if not np.isnan(tt) and tt > 48:
-        score += 5
     if not np.isnan(brn) and 10 < brn < 50:
         score += 6
 
@@ -487,13 +485,9 @@ def save_outputs(df):
 
         # SRH 0-3km (kolumna I)
         ws.conditional_format('I2:I200', {'type': 'cell', 'criteria': '>=', 'value': 150, 'format': fmt_red})
-        # K-Index (kolumna K) - wysokie wartości = zielone
-        ws.conditional_format('K2:K200', {'type': 'cell', 'criteria': '>=', 'value': 35, 'format': fmt_green})
-        # Total Totals (kolumna L)
-        ws.conditional_format('L2:L200', {'type': 'cell', 'criteria': '>=', 'value': 44, 'format': fmt_orange})
-        # BRN (kolumna M) - zakres 10-45 korzystny dla supercell (dwie reguły dla pełnej kompatybilności)
-        ws.conditional_format('M2:M200', {'type': 'cell', 'criteria': '>=', 'value': 10, 'format': fmt_green})
-        ws.conditional_format('M2:M200', {'type': 'cell', 'criteria': '<=', 'value': 45, 'format': fmt_green})
+        # BRN (kolumna L po usunięciu Total Totals) - zakres 10-45 korzystny dla supercell
+        ws.conditional_format('L2:L200', {'type': 'cell', 'criteria': '>=', 'value': 10, 'format': fmt_green})
+        ws.conditional_format('L2:L200', {'type': 'cell', 'criteria': '<=', 'value': 45, 'format': fmt_green})
 
     return [csv_path, xlsx_path]
 
