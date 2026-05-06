@@ -70,6 +70,7 @@ STATIC_MIDDLE = (
     "&lev_entire_atmosphere_%28considered_as_a_single_layer%29=on"
     "&lev_mean_sea_level=on"
     "&lev_3000-0_m_above_ground=on"
+    "&lev_0-3_km_above_ground=on"
     "&var_TMP=on"
     "&var_HGT=on"
     "&var_UGRD=on"
@@ -160,6 +161,32 @@ def calc_srh_01(u10, v10, u925, v925, u_storm, v_storm):
     return float(np.round(srh, 1))
 
 
+def wind_direction(u, v):
+    """Oblicza kierunek wiatru w stopniach (0-360) z U i V (meteorologiczna konwencja)"""
+    if np.isnan(u) or np.isnan(v):
+        return np.nan
+    direction = (270 - np.rad2deg(np.arctan2(v, u))) % 360
+    return round(direction, 1)
+
+
+def wind_compass(deg):
+    """Zwraca kierunek w skali 16-ramiennej"""
+    if np.isnan(deg):
+        return "-"
+    dirs = ['N', 'NNE', 'NE', 'ENE', 'E', 'ESE', 'SE', 'SSE',
+            'S', 'SSW', 'SW', 'WSW', 'W', 'WNW', 'NW', 'NNW']
+    idx = int((deg + 11.25) / 22.5) % 16
+    return dirs[idx]
+
+
+def is_foehn_wind(wdir):
+    """Sprawdza czy wiatr jest z kierunku halnego (SSE-S-SW) dla Krosna"""
+    if np.isnan(wdir):
+        return False
+    # SSE (157.5°) do SW (247.5°)
+    return 157.5 <= wdir <= 247.5
+
+
 # K-Index usunięty na prośbę użytkownika (DPT nie jest konsekwentnie dostępne)
 
 
@@ -176,6 +203,36 @@ def calc_brn(cape, dls_06):
         return np.nan
     brn = cape / (0.5 * dls_06 ** 2)
     return float(np.round(brn, 1))
+
+
+def calc_stp(cape, srh1, dls06, lcl):
+    """Significant Tornado Parameter (uproszczona wersja operacyjna)
+    
+    Wzór uproszczony:
+    STP = (CAPE/1500) × (SRH 0-1km/150) × (DLS 0-6km/20) × ((2000 - LCL)/1000)
+    
+    Wartości > 1 wskazują na podwyższone ryzyko silnych tornad (EF2+).
+    """
+    if any(np.isnan(x) for x in [cape, srh1, dls06, lcl]):
+        return np.nan
+    cape_term = min(cape / 1500.0, 1.5)
+    srh_term  = min(srh1 / 150.0, 1.5)
+    shear_term = min(dls06 / 20.0, 1.5)
+    lcl_term  = max(0, (2000 - lcl) / 1000.0)
+    stp = cape_term * srh_term * shear_term * lcl_term
+    return float(round(max(0, min(stp, 8.0)), 2))
+
+
+def supercell_rotation_type(srh3, supercell_risk):
+    """Zwraca typ rotacji tylko gdy ryzyko superkomórki > 20"""
+    if np.isnan(srh3) or supercell_risk <= 20:
+        return "-"
+    if srh3 > 50:
+        return "Prawoskrętna"
+    elif srh3 < -30:
+        return "Lewoskrętna"
+    else:
+        return "Neutralna"
 
 
 # -----------------------
@@ -228,6 +285,10 @@ def process_local_gribs(forecast_hours):
             u925 = safe_get_point(ds_925, ['u', 'UGRD'])
             v925 = safe_get_point(ds_925, ['v', 'VGRD'])
 
+            wdir = wind_direction(u10, v10)
+            wdir_compass = wind_compass(wdir)
+            foehn = is_foehn_wind(wdir)
+
             # Obliczenia shear i LR
             dls = np.sqrt((u500 - u10)**2 + (v500 - v10)**2) if not np.isnan(u500) and not np.isnan(u10) else np.nan
             dls_01 = np.sqrt((u925 - u10)**2 + (v925 - v10)**2) if not np.isnan(u925) and not np.isnan(u10) else np.nan
@@ -251,9 +312,11 @@ def process_local_gribs(forecast_hours):
             srh_01  = calc_srh_01(u10, v10, u925, v925, u_storm, v_storm)
 
             brn = calc_brn(cape, dls)
+            stp = calc_stp(cape, srh_01, dls, lcl)
 
-            prob = calc_storm_prob(cape, cin, li, dls, dls_01, srh_3km, srh_01, pwat, lcl, lr_700_500, brn)
-            supercell_risk = calc_supercell_risk(cape, dls, srh_3km, brn, li, dls_01, srh_01)
+            prob = calc_storm_prob(cape, cin, li, dls, dls_01, srh_3km, srh_01, pwat, lcl, lr_700_500, brn, foehn)
+            supercell_risk = calc_supercell_risk(cape, dls, srh_3km, brn, li, dls_01, srh_01, foehn)
+            rot_type = supercell_rotation_type(srh_3km, supercell_risk)
             hail = estimate_hail_size(cape, lr_700_500, dls)
 
             # Pokazuj ryzyko superkomórki tylko gdy jest szansa na burzę
@@ -271,13 +334,18 @@ def process_local_gribs(forecast_hours):
                 "SRH 0-3km [m²/s²]": int(round(srh_3km, 0)) if not np.isnan(srh_3km) else 0,
                 "SRH 0-1km approx [m²/s²]": round(srh_01, 1) if not np.isnan(srh_01) else np.nan,
                 "BRN": round(brn, 1) if not np.isnan(brn) else np.nan,
+                "STP": stp,
                 "LR 700-500 [C/km]": round(lr_700_500, 1),
                 "0°C Height [m]": round(zero_deg_h, 0),
                 "PWAT [mm]": round(pwat, 1),
                 "LCL [m]": round(lcl, 0),
+                "WDIR [°]": wdir,
+                "Kierunek": wdir_compass,
                 "Ryzyko Superkomórki [%]": supercell_display,
                 "Prob Burzy [%]": prob,
-                "Grad [cm]": hail
+                "Grad [cm]": hail,
+                "STP": stp,
+                "Rotacja supercelli": rot_type
             })
 
         except Exception as e:
@@ -291,8 +359,8 @@ def process_local_gribs(forecast_hours):
 
 
 # Algorytmy
-def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn):
-    """Ulepszona funkcja prawdopodobieństwa burzy — bierze pod uwagę znacznie więcej parametrów"""
+def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn, foehn=False):
+    """Ulepszona funkcja prawdopodobieństwa burzy — bierze pod uwagę znacznie więcej parametrów + wpływ halnego"""
     if np.isnan(cape) or cape < 50:
         return 0.0
 
@@ -368,11 +436,15 @@ def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn)
     if not np.isnan(brn) and 10 < brn < 50:
         score += 6
 
+    # === WPŁYW WIATRU HALNEGO (Krosno) ===
+    if foehn:
+        score *= 0.65   # Halny mocno osłabia burze (osuszanie + stabilizacja)
+
     return float(np.clip(np.round(score, 0), 0, 100))
 
 
-def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1):
-    """Ryzyko superkomórki (0-100) — bardziej czułe na dobre warunki"""
+def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1, foehn=False):
+    """Ryzyko superkomórki (0-100) — uwzględnia wpływ halnego w Krośnie"""
     if np.isnan(cape) or cape < 200:
         return 5.0
 
@@ -420,6 +492,11 @@ def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1):
     # DLS 0-1km
     if not np.isnan(dls01) and dls01 > 8:
         score += 4
+
+    # === WPŁYW WIATRU HALNEGO (Krosno) ===
+    # Halny z południa mocno osłabia burze poprzez osuszanie i stabilizację
+    if foehn:
+        score *= 0.55
 
     return float(np.clip(np.round(score, 0), 0, 100))
 
