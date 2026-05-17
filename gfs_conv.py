@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_krosno_conv_v3.1.py - Czysta wersja bez ukrytych znaków (U+00A0)
+# gfs_krosno_conv_v3.2.py - Hybrydowa wersja (oryginalna ekstrakcja + nowe indeksy)
 import os
 import requests
 import xarray as xr
@@ -39,7 +39,7 @@ if current_time >= time(20, 0) or current_time < time(3, 0):
 elif time(3, 0) <= current_time < time(8, 30):
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
-elif time(8, 30) <= current_time < time(15, 37):
+elif time(8, 30) <= current_time < time(16, 30):
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
 else:
@@ -82,6 +82,19 @@ def safe_get_point(ds, possible_names):
                 continue
     return np.nan
 
+def safe_get_point_level(ds, level, possible_names):
+    if ds is None:
+        return np.nan
+    for name in possible_names:
+        if name in ds.data_vars:
+            try:
+                val = ds[name].sel(level=level, latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
+                return float(np.squeeze(np.array(val)))
+            except:
+                continue
+    return np.nan
+
+# ==================== ORYGINALNE FUNKCJE ====================
 def estimate_storm_motion(u10, v10, u500, v500):
     if any(np.isnan(x) for x in [u10, v10, u500, v500]):
         return np.nan, np.nan
@@ -231,6 +244,7 @@ def estimate_hail_size(cape, lr, dls):
         hail *= 1.3
     return float(np.round(np.clip(hail, 0, 8), 1))
 
+# ==================== NOWE FUNKCJE ====================
 def extract_profile_for_metpy(ds_isobaric):
     if ds_isobaric is None or not METPY_AVAILABLE:
         return None
@@ -336,6 +350,7 @@ def process_local_gribs(forecast_hours):
             ds_isobaric = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa"})
             ds_hlcy = try_open_by_filter(path, {"shortName": "hlcy"})
 
+            # Oryginalna metoda ekstrakcji (z Twojej pierwszej wersji)
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
             cape = safe_get_point(ds_sfc, ['cape', 'CAPE'])
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
@@ -489,7 +504,7 @@ def upload_to_ftp(files):
         print(f"❌ FTP Error: {e}")
 
 if __name__ == "__main__":
-    print(f"\n=== GFS CONVECTION v3.1 {RUN_DATE}{RUN_HOUR}Z ===\n")
+    print(f"\n=== GFS CONVECTION v3.2 {RUN_DATE}{RUN_HOUR}Z ===\n")
     start_time = datetime.utcnow()
     while True:
         elapsed = (datetime.utcnow() - start_time).total_seconds() / 60
