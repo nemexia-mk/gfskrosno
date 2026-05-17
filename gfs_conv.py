@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_krosno_conv_final.py - Oryginalna logika + nowe funkcje (DLS, SRH, BRN, STP, LCL działają)
+# gfs_conv_merged_final.py - Połączenie Twojego działającego skryptu + wszystkie parametry konwekcyjne
 import os
 import requests
 import xarray as xr
@@ -39,7 +39,7 @@ if current_time >= time(20, 0) or current_time < time(3, 0):
 elif time(3, 0) <= current_time < time(8, 30):
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
-elif time(8, 30) <= current_time < time(16, 30):
+elif time(8, 30) <= current_time < time(14, 30):
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
 else:
@@ -56,7 +56,7 @@ STATIC_MIDDLE = (
     "&lev_850_mb=on&lev_700_mb=on&lev_500_mb=on&lev_925_mb=on&lev_1000_mb=on"
     "&lev_surface=on&lev_entire_atmosphere_%28considered_as_a_single_layer%29=on"
     "&var_TMP=on&var_HGT=on&var_UGRD=on&var_VGRD=on&var_CAPE=on&var_CIN=on"
-    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on"
+    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on"
     "&subregion=on"
     f"&toplat={TOP_LAT}&bottomlat={BOTTOM_LAT}&leftlon={LEFT_LON}&rightlon={RIGHT_LON}"
 )
@@ -82,19 +82,6 @@ def safe_get_point(ds, possible_names):
                 continue
     return np.nan
 
-def safe_get_point_level(ds, level, possible_names):
-    if ds is None:
-        return np.nan
-    for name in possible_names:
-        if name in ds.data_vars:
-            try:
-                val = ds[name].sel(level=level, latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
-                return float(np.squeeze(np.array(val)))
-            except:
-                continue
-    return np.nan
-
-# ==================== ORYGINALNE FUNKCJE (z Twojego pierwszego skryptu) ====================
 def estimate_storm_motion(u10, v10, u500, v500):
     if any(np.isnan(x) for x in [u10, v10, u500, v500]):
         return np.nan, np.nan
@@ -244,7 +231,6 @@ def estimate_hail_size(cape, lr, dls):
         hail *= 1.3
     return float(np.round(np.clip(hail, 0, 8), 1))
 
-# ==================== NOWE FUNKCJE ====================
 def extract_profile_for_metpy(ds_isobaric):
     if ds_isobaric is None or not METPY_AVAILABLE:
         return None
@@ -292,7 +278,7 @@ def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, foehn=False, o
 
 def classify_storm_mode(cape, dls06, srh3, cin, lcl, prob):
     if prob < 15 or np.isnan(cape) or cape < 100:
-        return "Brak / Słaba"
+        return ""
     if cin < -150 and cape > 800:
         return "Elevated"
     if dls06 < 10:
@@ -310,6 +296,18 @@ def calc_orographic_factor(wdir, wspd):
         return 1.0
     angle_diff = min(abs(wdir - 220), 360 - abs(wdir - 220))
     return round(min(1.0 + 0.6 * np.sin(np.radians(angle_diff)) * min(wspd/15, 1.2), 1.8), 2)
+
+def improved_lcl(t2m, td850):
+    if np.isnan(t2m):
+        return np.nan
+    if np.isnan(td850):
+        td850 = t2m - 8
+    lcl = 125 * (t2m - td850)
+    if lcl < 200:
+        lcl = 200
+    if lcl > 3000:
+        lcl = 3000
+    return round(lcl, 0)
 
 def download_missing_gribs_parallel(forecast_hours):
     pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 45000]
@@ -337,6 +335,7 @@ def download_missing_gribs_parallel(forecast_hours):
 
 def process_local_gribs(forecast_hours):
     rows = []
+    cumulative_rain = 0.0
     for fh in forecast_hours:
         path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         if not os.path.exists(path):
@@ -344,13 +343,17 @@ def process_local_gribs(forecast_hours):
         try:
             print(f"  f{fh:03d}...", end=" ")
             
-            # === ORYGINALNA EKSTRAKCJA (z Twojego pierwszego skryptu) ===
             ds_sfc = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "instant"})
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
             ds_pwat = try_open_by_filter(path, {"typeOfLevel": "atmosphereSingleLayer"})
             ds_isobaric = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa"})
             ds_hlcy = try_open_by_filter(path, {"shortName": "hlcy"})
+
+            ds_500 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 500})
+            ds_925 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 925})
+            ds_850 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 850})
+            ds_700 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 700})
 
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
             cape = safe_get_point(ds_sfc, ['cape', 'CAPE'])
@@ -359,20 +362,25 @@ def process_local_gribs(forecast_hours):
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
             srh3 = safe_get_point(ds_hlcy, ['hlcy', 'HLCY'])
 
-            t850 = safe_get_point_level(ds_isobaric, 850, ['t', 'TMP']) - 273.15
-            t700 = safe_get_point_level(ds_isobaric, 700, ['t', 'TMP']) - 273.15
-            t500 = safe_get_point_level(ds_isobaric, 500, ['t', 'TMP']) - 273.15
-            td850 = safe_get_point_level(ds_isobaric, 850, ['dpt', 'DPT']) - 273.15
-            rh850 = safe_get_point_level(ds_isobaric, 850, ['r', 'RH'])
-            rh700 = safe_get_point_level(ds_isobaric, 700, ['r', 'RH'])
-            vvel850 = safe_get_point_level(ds_isobaric, 850, ['w', 'VVEL'])
+            t850 = safe_get_point(ds_850, ['t', 'TMP']) - 273.15
+            t700 = safe_get_point(ds_700, ['t', 'TMP']) - 273.15
+            t500 = safe_get_point(ds_500, ['t', 'TMP']) - 273.15
+            td850 = safe_get_point(ds_850, ['dpt', 'DPT']) - 273.15
+            rh850 = safe_get_point(ds_850, ['r', 'RH'])
+            rh700 = safe_get_point(ds_700, ['r', 'RH'])
+            vvel850 = safe_get_point(ds_850, ['w', 'VVEL'])
 
             u10 = safe_get_point(ds_10m, ['u10', '10u', 'UGRD'])
             v10 = safe_get_point(ds_10m, ['v10', '10v', 'VGRD'])
-            u500 = safe_get_point_level(ds_isobaric, 500, ['u', 'UGRD'])
-            v500 = safe_get_point_level(ds_isobaric, 500, ['v', 'VGRD'])
-            u925 = safe_get_point_level(ds_isobaric, 925, ['u', 'UGRD'])
-            v925 = safe_get_point_level(ds_isobaric, 925, ['v', 'VGRD'])
+            u500 = safe_get_point(ds_500, ['u', 'UGRD'])
+            v500 = safe_get_point(ds_500, ['v', 'VGRD'])
+            u925 = safe_get_point(ds_925, ['u', 'UGRD'])
+            v925 = safe_get_point(ds_925, ['v', 'VGRD'])
+
+            apcp = safe_get_point(ds_sfc, ['apcp', 'APCP'])
+            if not np.isnan(apcp):
+                cumulative_rain += apcp
+            rain_hour = apcp if not np.isnan(apcp) else 0.0
 
             wdir = wind_direction(u10, v10)
             foehn = is_foehn_wind(wdir)
@@ -385,17 +393,16 @@ def process_local_gribs(forecast_hours):
 
             u_storm, v_storm = estimate_storm_motion(u10, v10, u500, v500)
             srh_01 = calc_srh_01(u10, v10, u925, v925, u_storm, v_storm)
-            lcl = 125 * (t2m - (td850 if not np.isnan(td850) else t2m - 8)) if not np.isnan(t2m) else np.nan
+            lcl = improved_lcl(t2m, td850)
             stp_old = calc_stp(cape, srh_01, dls06, lcl)
             prob_old = calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh_01, pwat, lcl, lr_700_500, brn, foehn)
             supercell_risk = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01, foehn)
             rot_type = supercell_rotation_type(srh3, supercell_risk)
             hail = estimate_hail_size(cape, lr_700_500, dls06)
 
-            # === NOWE INDEKSY (MetPy + Heavy Rain + Storm Mode) ===
             mucape = dcape = ship = ehi = stp_full = np.nan
             heavy_rain = 0.0
-            storm_mode = "Brak danych"
+            storm_mode = ""
 
             profile = extract_profile_for_metpy(ds_isobaric)
             if profile and METPY_AVAILABLE:
@@ -449,7 +456,9 @@ def process_local_gribs(forecast_hours):
                 "SHIP": ship if not np.isnan(ship) else "-",
                 "EHI": ehi if not np.isnan(ehi) else "-",
                 "PWAT [mm]": round(pwat, 1) if not np.isnan(pwat) else "-",
-                "LCL [m]": round(lcl, 0) if not np.isnan(lcl) else "-",
+                "LCL [m]": lcl,
+                "Opad [mm/h]": round(rain_hour, 1),
+                "Kumulacyjny opad [mm]": round(cumulative_rain, 1),
                 "Heavy Rain Pot [%]": heavy_rain,
                 "Prob Burzy [%]": prob_old,
                 "Prob Tornado [%]": round(prob_tornado, 0),
@@ -506,7 +515,7 @@ def upload_to_ftp(files):
         print(f"❌ FTP Error: {e}")
 
 if __name__ == "__main__":
-    print(f"\n=== GFS CONVECTION FINAL {RUN_DATE}{RUN_HOUR}Z ===\n")
+    print(f"\n=== GFS CONVECTION MERGED FINAL {RUN_DATE}{RUN_HOUR}Z ===\n")
     start_time = datetime.utcnow()
     while True:
         elapsed = (datetime.utcnow() - start_time).total_seconds() / 60
