@@ -39,7 +39,7 @@ if current_time >= time(20, 0) or current_time < time(3, 0):
 elif time(3, 0) <= current_time < time(8, 30):
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
-elif time(8, 30) <= current_time < time(14, 30):
+elif time(8, 30) <= current_time < time(15, 30):
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
 else:
