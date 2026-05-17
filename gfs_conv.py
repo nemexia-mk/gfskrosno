@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_krosno_conv_v3.1.py - Czysta wersja bez ukrytych znaków
+# gfs_krosno_conv_v3.1.py - Czysta wersja bez ukrytych znaków (U+00A0)
 import os
 import requests
 import xarray as xr
