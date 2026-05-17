@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_krosno_conv_v3.2.py - Hybrydowa wersja (oryginalna ekstrakcja + nowe indeksy)
+# gfs_krosno_conv_final.py - Oryginalna logika + nowe funkcje (DLS, SRH, BRN, STP, LCL działają)
 import os
 import requests
 import xarray as xr
@@ -94,7 +94,7 @@ def safe_get_point_level(ds, level, possible_names):
                 continue
     return np.nan
 
-# ==================== ORYGINALNE FUNKCJE ====================
+# ==================== ORYGINALNE FUNKCJE (z Twojego pierwszego skryptu) ====================
 def estimate_storm_motion(u10, v10, u500, v500):
     if any(np.isnan(x) for x in [u10, v10, u500, v500]):
         return np.nan, np.nan
@@ -343,6 +343,8 @@ def process_local_gribs(forecast_hours):
             continue
         try:
             print(f"  f{fh:03d}...", end=" ")
+            
+            # === ORYGINALNA EKSTRAKCJA (z Twojego pierwszego skryptu) ===
             ds_sfc = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "instant"})
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
@@ -350,7 +352,6 @@ def process_local_gribs(forecast_hours):
             ds_isobaric = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa"})
             ds_hlcy = try_open_by_filter(path, {"shortName": "hlcy"})
 
-            # Oryginalna metoda ekstrakcji (z Twojej pierwszej wersji)
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
             cape = safe_get_point(ds_sfc, ['cape', 'CAPE'])
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
@@ -358,20 +359,20 @@ def process_local_gribs(forecast_hours):
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
             srh3 = safe_get_point(ds_hlcy, ['hlcy', 'HLCY'])
 
-            t850 = safe_get_point(ds_isobaric, ['t', 'TMP']) - 273.15 if 'level' in ds_isobaric.coords else np.nan
-            t700 = safe_get_point(ds_isobaric, ['t', 'TMP']) - 273.15 if 'level' in ds_isobaric.coords else np.nan
-            t500 = safe_get_point(ds_isobaric, ['t', 'TMP']) - 273.15 if 'level' in ds_isobaric.coords else np.nan
-            td850 = safe_get_point(ds_isobaric, ['dpt', 'DPT']) - 273.15 if 'level' in ds_isobaric.coords else np.nan
-            rh850 = safe_get_point(ds_isobaric, ['r', 'RH']) if 'level' in ds_isobaric.coords else np.nan
-            rh700 = safe_get_point(ds_isobaric, ['r', 'RH']) if 'level' in ds_isobaric.coords else np.nan
-            vvel850 = safe_get_point(ds_isobaric, ['w', 'VVEL']) if 'level' in ds_isobaric.coords else np.nan
+            t850 = safe_get_point_level(ds_isobaric, 850, ['t', 'TMP']) - 273.15
+            t700 = safe_get_point_level(ds_isobaric, 700, ['t', 'TMP']) - 273.15
+            t500 = safe_get_point_level(ds_isobaric, 500, ['t', 'TMP']) - 273.15
+            td850 = safe_get_point_level(ds_isobaric, 850, ['dpt', 'DPT']) - 273.15
+            rh850 = safe_get_point_level(ds_isobaric, 850, ['r', 'RH'])
+            rh700 = safe_get_point_level(ds_isobaric, 700, ['r', 'RH'])
+            vvel850 = safe_get_point_level(ds_isobaric, 850, ['w', 'VVEL'])
 
             u10 = safe_get_point(ds_10m, ['u10', '10u', 'UGRD'])
             v10 = safe_get_point(ds_10m, ['v10', '10v', 'VGRD'])
-            u500 = safe_get_point(ds_isobaric, ['u', 'UGRD']) if 'level' in ds_isobaric.coords else np.nan
-            v500 = safe_get_point(ds_isobaric, ['v', 'VGRD']) if 'level' in ds_isobaric.coords else np.nan
-            u925 = safe_get_point(ds_isobaric, ['u', 'UGRD']) if 'level' in ds_isobaric.coords else np.nan
-            v925 = safe_get_point(ds_isobaric, ['v', 'VGRD']) if 'level' in ds_isobaric.coords else np.nan
+            u500 = safe_get_point_level(ds_isobaric, 500, ['u', 'UGRD'])
+            v500 = safe_get_point_level(ds_isobaric, 500, ['v', 'VGRD'])
+            u925 = safe_get_point_level(ds_isobaric, 925, ['u', 'UGRD'])
+            v925 = safe_get_point_level(ds_isobaric, 925, ['v', 'VGRD'])
 
             wdir = wind_direction(u10, v10)
             foehn = is_foehn_wind(wdir)
@@ -391,6 +392,7 @@ def process_local_gribs(forecast_hours):
             rot_type = supercell_rotation_type(srh3, supercell_risk)
             hail = estimate_hail_size(cape, lr_700_500, dls06)
 
+            # === NOWE INDEKSY (MetPy + Heavy Rain + Storm Mode) ===
             mucape = dcape = ship = ehi = stp_full = np.nan
             heavy_rain = 0.0
             storm_mode = "Brak danych"
@@ -504,7 +506,7 @@ def upload_to_ftp(files):
         print(f"❌ FTP Error: {e}")
 
 if __name__ == "__main__":
-    print(f"\n=== GFS CONVECTION v3.2 {RUN_DATE}{RUN_HOUR}Z ===\n")
+    print(f"\n=== GFS CONVECTION FINAL {RUN_DATE}{RUN_HOUR}Z ===\n")
     start_time = datetime.utcnow()
     while True:
         elapsed = (datetime.utcnow() - start_time).total_seconds() / 60
