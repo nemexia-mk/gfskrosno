@@ -37,10 +37,10 @@ current_time = now.time()
 if current_time >= time(20, 0) or current_time < time(3, 0):
     RUN_HOUR = "18"
     RUN_DATE = now.strftime("%Y%m%d") if current_time >= time(22, 0) else (now - timedelta(days=1)).strftime("%Y%m%d")
-elif time(3, 0) <= current_time < time(9, 30):
+elif time(3, 0) <= current_time < time(7, 10):
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
-elif time(9, 30) <= current_time < time(14, 30):
+elif time(7, 10) <= current_time < time(14, 30):
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
 else:
