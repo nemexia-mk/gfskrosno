@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v9_ultimate.py - WERSJA ZAAWANSOWANA (Z OPTYMALIZACJĄ INDEKSÓW, OROGRAFII I ARCHIWUM)
+# gfs_conv_v10_ultimate.py - WERSJA CZYSTA (Z OPTYMALIZACJĄ, SC, DB I PUSTYMI POLAMI)
 import os
 import requests
 import xarray as xr
@@ -52,7 +52,7 @@ BASE_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 FORECAST_HOURS = list(range(0, 384, 3))
 
-# BEZPIECZNA LISTA (Brak błędu 500 po godzinie f240)
+# BEZPIECZNA LISTA
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on&lev_10_m_above_ground=on"
     "&lev_850_mb=on&lev_700_mb=on&lev_500_mb=on&lev_925_mb=on&lev_1000_mb=on"
@@ -117,13 +117,13 @@ def calc_stp(cape, srh1, dls06, lcl):
     return float(round(max(0, min((cape/1500) * (srh1/150) * (dls06/20) * max(0, (2000 - lcl)/1000), 8.0)), 2))
 
 def supercell_rotation_type(srh3, supercell_risk=None):
-    if np.isnan(srh3) or (supercell_risk is not None and supercell_risk <= 20): return "Neutralna"
+    if np.isnan(srh3) or (supercell_risk is not None and supercell_risk <= 20): return np.nan
     if srh3 > 50: return "Prawoskrętna"
     elif srh3 < -30: return "Lewoskrętna"
-    return "Neutralna"
+    return np.nan
 
 def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn, foehn=False):
-    if np.isnan(cape) or cape < 50: return 0.0
+    if np.isnan(cape) or cape < 50: return np.nan
     score = min(cape / 1200.0, 1.0) * 35
     if not np.isnan(cin):
         if -50 < cin < 0: score += 15
@@ -154,10 +154,11 @@ def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn,
         elif lr > 6.5: score += 3
     if not np.isnan(brn) and 10 < brn < 50: score += 6
     if foehn: score *= 0.65
-    return float(np.clip(np.round(score, 0), 0, 100))
+    val = float(np.clip(np.round(score, 0), 0, 100))
+    return val if val > 0 else np.nan
 
 def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1, foehn=False):
-    if np.isnan(cape) or cape < 200: return 5.0
+    if np.isnan(cape) or cape < 200: return np.nan
     score = 0.0
     if cape > 1500: score += 30
     elif cape > 800: score += 22
@@ -176,29 +177,36 @@ def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1, foehn=False):
     if not np.isnan(srh1) and srh1 < -50: score -= 6
     if not np.isnan(dls01) and dls01 > 8: score += 4
     if foehn: score *= 0.55
-    return float(np.clip(np.round(score, 0), 0, 100))
+    val = float(np.clip(np.round(score, 0), 0, 100))
+    return val if val > 0 else np.nan
 
+# ULEPSZONA LOGIKA GRADU
 def estimate_hail_size(cape, lr, dls):
-    if np.isnan(cape) or cape < 400: return 0.0
-    hail = (cape / 1000.0) * (lr / 6.5 if not np.isnan(lr) else 1.0)
-    if not np.isnan(dls) and dls > 20: hail *= 1.3
-    return float(np.round(np.clip(hail, 0, 8), 1))
+    if np.isnan(cape) or cape < 300: return np.nan
+    hail = (cape / 800.0) * (lr / 6.5 if not np.isnan(lr) else 1.0)
+    if not np.isnan(dls) and dls > 15: 
+        hail *= (1.0 + (dls - 15) * 0.02) # DLS promuje separację prądów = większe gradziny
+    if hail < 0.5: return np.nan
+    return float(np.round(np.clip(hail, 0, 10), 1))
 
 def calc_ship(mucape, mu_mixing_ratio, lr_700_500, t500, dls06):
     if any(np.isnan(x) for x in [mucape, mu_mixing_ratio, lr_700_500, t500, dls06]): return np.nan
-    return round(max(0, min((mucape * mu_mixing_ratio * lr_700_500 * abs(t500) * dls06) / 44000000, 5.0)), 2)
+    val = round(max(0, min((mucape * mu_mixing_ratio * lr_700_500 * abs(t500) * dls06) / 44000000, 5.0)), 2)
+    return val if val > 0 else np.nan
 
 def calc_ehi(cape, srh):
-    return round((cape * srh) / 160000, 2) if not np.isnan(cape) and not np.isnan(srh) and cape > 0 else 0.0
+    val = round((cape * srh) / 160000, 2) if not np.isnan(cape) and not np.isnan(srh) and cape > 0 else np.nan
+    return val if val > 0 else np.nan
 
 def calc_full_stp(sbcape, lcl_h, srh01, dls06, sbcin):
     if any(np.isnan(x) for x in [sbcape, lcl_h, srh01, dls06, sbcin]): return np.nan
-    return round(max(0, min((min(sbcape/1500,1.5) * max(0,(2000-lcl_h)/1000) * min(srh01/150,1.5) * min(dls06/20,1.5) * max(0,(200+sbcin)/150)), 8.0)), 2)
+    val = round(max(0, min((min(sbcape/1500,1.5) * max(0,(2000-lcl_h)/1000) * min(srh01/150,1.5) * min(dls06/20,1.5) * max(0,(200+sbcin)/150)), 8.0)), 2)
+    return val if val > 0 else np.nan
 
-# NOWE USPRAWNIENIE: Logika niszczącego wiatru (Downburst / Microburst)
+# DOWNBURST RISK
 def calc_wind_risk(dcape, rh700, dls06, cape):
-    base_dcape = dcape if (not np.isnan(dcape) and isinstance(dcape, (int, float))) else (cape * 0.35 if not np.isnan(cape) else 0.0)
-    if base_dcape < 300: return 0.0
+    base_dcape = dcape if (not np.isnan(dcape)) else (cape * 0.35 if not np.isnan(cape) else 0.0)
+    if base_dcape < 300: return np.nan
     score = min(base_dcape / 1100.0, 1.0) * 45
     if not np.isnan(rh700):
         if rh700 < 45: score += 25
@@ -206,35 +214,39 @@ def calc_wind_risk(dcape, rh700, dls06, cape):
     if not np.isnan(dls06):
         if dls06 > 22: score += 30
         elif dls06 > 13: score += 15
-    return float(np.clip(np.round(score, 0), 0, 100))
+    val = float(np.clip(np.round(score, 0), 0, 100))
+    return val if val > 0 else np.nan
 
-# NOWE USPRAWNIENIE: Zmiana parametrów i dodanie wpływu prędkości burzy (Flash Flood Risk)
 def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn=False, orographic=1.0):
-    if np.isnan(pwat) or pwat < 20: return 0.0
+    if np.isnan(pwat) or pwat < 20: return np.nan
     score = min(pwat/40,1)*35 + (min(rh850/90,1)*20 if not np.isnan(rh850) else 0) + (min(rh700/85,1)*15 if not np.isnan(rh700) else 0)
     if not np.isnan(vvel850) and vvel850 < 0: score += min(abs(vvel850)/0.8,1)*15
     if not np.isnan(dls06) and 10 < dls06 < 25: score += 10
     
-    # Uwzględnienie prędkości przemieszczania komórek
     if not np.isnan(storm_speed):
-        if storm_speed < 5.0: score += 20     # Układ stacjonarny - ekstremalne ryzyko zalania punktowego
+        if storm_speed < 5.0: score += 20     
         elif storm_speed < 10.0: score += 10
-        elif storm_speed > 18.0: score -= 15    # Szybki układ - opad rozłożony w przestrzeni
+        elif storm_speed > 18.0: score -= 15    
         
     score *= orographic
     if foehn: score *= 0.6
-    return float(np.clip(round(score,0),0,100))
+    val = float(np.clip(round(score,0),0,100))
+    return val if val > 0 else np.nan
 
-# NOWE USPRAWNIENIE: Zbiorczy indeks zagrożenia (0-3)
-def calc_threat_level(prob_ulewa, prob_grad, prob_wiatr):
-    max_prob = max(prob_ulewa, prob_grad, prob_wiatr)
-    if max_prob < 25: return 0
-    elif max_prob < 50: return 1
-    elif max_prob < 75: return 2
+def calc_threat_level(prob_ulewa, prob_grad, prob_db, prob_tornado):
+    p_u = prob_ulewa if not np.isnan(prob_ulewa) else 0.0
+    p_g = prob_grad if not np.isnan(prob_grad) else 0.0
+    p_w = prob_db if not np.isnan(prob_db) else 0.0
+    p_t = prob_tornado if not np.isnan(prob_tornado) else 0.0
+    
+    max_prob = max(p_u, p_g, p_w, p_t)
+    if max_prob < 15: return np.nan
+    elif max_prob < 40: return 1
+    elif max_prob < 70: return 2
     return 3
 
 def classify_storm_mode(cape, dls06, srh3, cin, lcl, prob):
-    if prob < 15 or np.isnan(cape) or cape < 100: return ""
+    if np.isnan(prob) or prob < 15 or np.isnan(cape) or cape < 100: return np.nan
     if cin < -150 and cape > 800: return "Elevated"
     if dls06 < 10: return "Pulse / Zwykła"
     if dls06 > 25 and srh3 > 150 and cape > 800: return "Supercell (prawdopodobna)"
@@ -294,6 +306,13 @@ def download_missing_gribs_parallel(forecast_hours):
     with ThreadPoolExecutor(max_workers=1) as ex:
         ex.map(fetch_single, pending)
 
+# ==================== FORMATOWANIE WYNIKÓW (CZYSTA TABELA) ====================
+def fmt(val, decimals=0, zero_as_nan=True):
+    if val is None or pd.isna(val) or np.isnan(val): return np.nan
+    if zero_as_nan and val == 0: return np.nan
+    if decimals == 0: return int(round(val))
+    return round(val, decimals)
+
 # ==================== GŁÓWNE PRZETWARZANIE ====================
 def process_local_gribs(forecast_hours):
     print("\n[ANALIZA] Rozpoczynam przetwarzanie plików GRIB...", flush=True)
@@ -309,7 +328,7 @@ def process_local_gribs(forecast_hours):
         try:
             print(f"  ▶ Analiza f{fh:03d}...", end=" ", flush=True)
             
-            # Wczytywanie z cfgrib
+            # Wczytywanie
             ds_sfc = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "instant"})
             ds_accum = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "accum"})
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
@@ -374,8 +393,6 @@ def process_local_gribs(forecast_hours):
 
             # =================== OBLICZENIA POCHODNE ====================
             wdir = wind_direction(u10, v10)
-            
-            # USPRAWNIENIE: Detekcja halnego z poziomu grzbietów (850 hPa) zamiast zakłóconej warstwy 10m
             wdir850 = wind_direction(u850, v850)
             foehn = is_foehn_wind(wdir850)
             
@@ -391,7 +408,6 @@ def process_local_gribs(forecast_hours):
             storm_speed = np.hypot(u_storm, v_storm) if not (np.isnan(u_storm) or np.isnan(v_storm)) else np.nan
             
             srh_01 = calc_srh_layer(u10, v10, u925, v925, u_storm, v_storm)
-            
             srh3_manual = calc_srh_layer(u10, v10, u700, v700, u_storm, v_storm) * 1.3
             srh3 = safe_get_point(ds_hlcy, ['hlcy', 'HLCY'])
             if np.isnan(srh3):
@@ -451,67 +467,75 @@ def process_local_gribs(forecast_hours):
             # =================== KOŃCOWE WYNIKI ====================
             stp_old = calc_stp(cape, srh_01, dls06, lcl)
             prob_old = calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh_01, pwat, lcl, lr_700_500, brn, foehn)
-            supercell_risk = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01, foehn)
-            rot_type = supercell_rotation_type(srh3, supercell_risk)
+            
+            # PROB SC (Supercell)
+            prob_sc = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01, foehn)
+            rot_type = supercell_rotation_type(srh3, prob_sc)
             hail = estimate_hail_size(cape, lr_700_500, dls06)
 
-            # Obliczanie ulepszonego prawdopodobieństwa ulewy oraz nowego parametru wiatru
             prob_ulewa = calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn, orog_factor)
-            prob_wiatr = calc_wind_risk(dcape, rh700, dls06, cape)
+            prob_db = calc_wind_risk(dcape, rh700, dls06, cape) # PROB DB (Downburst)
             
-            prob_temp = min(cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
+            base_cape = cape if not np.isnan(cape) else 0.0
+            prob_temp = min(base_cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
 
-            # USPRAWNIENIE: Detekcja tornad niesuperkomórkowych (NST) przy niskim ścinaniu, niskim LCL i wysokim CAPE dolnym
-            prob_tornado = min(max(0, (stp_full or 0) * 25 + (srh3 / 300 * 30 if not np.isnan(srh3) else 0)), 100)
+            base_stp = stp_full if not np.isnan(stp_full) else 0.0
+            prob_tornado = min(max(0, base_stp * 25 + (srh3 / 300 * 30 if not np.isnan(srh3) else 0)), 100)
+            
             if not np.isnan(dls06) and dls06 < 12.0:
                 if not np.isnan(cape) and cape > 150 and not np.isnan(lcl) and lcl < 900:
                     nst_score = min(30.0, (cape / 800.0) * 15 + ((1000 - lcl) / 1000) * 15)
                     prob_tornado = max(prob_tornado, nst_score)
+            if prob_tornado <= 0: prob_tornado = np.nan
 
-            prob_grad = min(max(0, (ship or 0) * 35 + (cape / 2000 * 25)), 100)
+            # Poprawiona ocena gradu wykorzystująca MUCAPE oraz zoptymalizowany indeks SHIP
+            base_ship = ship if not np.isnan(ship) else 0.0
+            prob_grad = min(max(0, base_ship * 30 + (base_cape / 1500 * 25)), 100)
+            if prob_grad <= 0: prob_grad = np.nan
 
             if foehn:
-                prob_old = int(prob_old * 0.65)
-                prob_tornado = int(prob_tornado * 0.5)
-                prob_grad = int(prob_grad * 0.6)
-                prob_wiatr = int(prob_wiatr * 0.7) # Halny tłumi silne prądy zstępujące przez rozbijanie termiki komórek
+                if not np.isnan(prob_old): prob_old *= 0.65
+                if not np.isnan(prob_tornado): prob_tornado *= 0.5
+                if not np.isnan(prob_grad): prob_grad *= 0.6
+                if not np.isnan(prob_db): prob_db *= 0.7
+                if not np.isnan(prob_sc): prob_sc *= 0.55
 
-            # Obliczenie zbiorczego indeksu zagrożenia
-            threat_level = calc_threat_level(prob_ulewa, prob_grad, prob_wiatr)
+            threat_level = calc_threat_level(prob_ulewa, prob_grad, prob_db, prob_tornado)
 
             rows.append({
                 "Czas": datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh),
                 "T+": fh,
-                "T2M [°C]": round(t2m, 1),
-                "CAPE [J/kg]": int(round(cape)) if not np.isnan(cape) else 0,
-                "MUCAPE [J/kg]": int(round(mucape)) if not np.isnan(mucape) else "-",
-                "CIN [J/kg]": int(round(cin)) if not np.isnan(cin) else 0,
-                "DCAPE [J/kg]": int(round(dcape)) if not np.isnan(dcape) else "-",
-                "DLS 0-6km [m/s]": round(dls06, 1) if not np.isnan(dls06) else "-",
-                "DLS 0-1km [m/s]": round(dls01, 1) if not np.isnan(dls01) else "-",
-                "SRH 0-3km": int(round(srh3)) if not np.isnan(srh3) else 0,
-                "SRH 0-1km approx": round(srh_01, 1) if not np.isnan(srh_01) else "-",
-                "BRN": round(brn, 1) if not np.isnan(brn) else "-",
-                "STP (stary)": stp_old,
-                "STP (pełny MetPy)": stp_full if not np.isnan(stp_full) else "-",
-                "SHIP": ship if not np.isnan(ship) else "-",
-                "EHI": ehi if not np.isnan(ehi) else "-",
-                "PWAT [mm]": round(pwat, 1) if not np.isnan(pwat) else "-",
-                "LCL [m]": lcl,
-                "Opad [mm/h]": round(rain_hour, 1),
-                "Kumulacyjny opad [mm]": round(cumulative_rain, 1),
-                "Prob Burzy [%]": prob_old,
-                "Prob Tornado [%]": round(prob_tornado, 0),
-                "Prob Grad [%]": round(prob_grad, 0),
-                "Prob Wiatr [%]": round(prob_wiatr, 0),
-                "Prob Ulewa [%]": prob_ulewa,
+                "T2M [°C]": fmt(t2m, 1, False),
+                "CAPE [J/kg]": fmt(cape, 0, True),
+                "MUCAPE [J/kg]": fmt(mucape, 0, True),
+                "CIN [J/kg]": fmt(cin, 0, False), # 0 jest znaczące (brak inwersji)
+                "DCAPE [J/kg]": fmt(dcape, 0, True),
+                "DLS 0-6km [m/s]": fmt(dls06, 1, True),
+                "DLS 0-1km [m/s]": fmt(dls01, 1, True),
+                "SRH 0-3km": fmt(srh3, 0, True),
+                "SRH 0-1km approx": fmt(srh_01, 1, True),
+                "BRN": fmt(brn, 1, True),
+                "STP (stary)": fmt(stp_old, 2, True),
+                "STP (pełny MetPy)": fmt(stp_full, 2, True),
+                "SHIP": fmt(ship, 2, True),
+                "EHI": fmt(ehi, 2, True),
+                "PWAT [mm]": fmt(pwat, 1, True),
+                "LCL [m]": fmt(lcl, 0, False), # 0 potencjalnie ważne
+                "Opad [mm/h]": fmt(rain_hour, 1, True),
+                "Kumulacyjny opad [mm]": fmt(cumulative_rain, 1, True),
+                "Prob Burzy [%]": fmt(prob_old, 0, True),
+                "Prob SC [%]": fmt(prob_sc, 0, True),
+                "Prob Tornado [%]": fmt(prob_tornado, 0, True),
+                "Prob Grad [%]": fmt(prob_grad, 0, True),
+                "Prob DB [%]": fmt(prob_db, 0, True),
+                "Prob Ulewa [%]": fmt(prob_ulewa, 0, True),
                 "Storm Mode": storm_mode,
                 "Rotacja": rot_type,
-                "Grad [cm]": hail,
-                "Halny": "TAK" if foehn else "NIE",
-                "Orografia": orog_factor,
-                "Zagrożenie": threat_level
+                "Grad [cm]": fmt(hail, 1, True),
+                "Halny": "TAK" if foehn else np.nan,
+                "Orografia": fmt(orog_factor, 2, False),
+                "Zagrożenie": fmt(threat_level, 0, True)
             })
             print("OK", flush=True)
         except Exception as e:
@@ -530,15 +554,16 @@ def process_local_gribs(forecast_hours):
 def save_outputs(df):
     if df.empty: return []
     csv_path = os.path.join(OUTPUT_DIR, "gfs-conv.csv")
-    df.to_csv(csv_path, index=False, encoding='utf-8')
-    xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z.xlsx")
     
+    # Oczyszczenie tabeli - wymuszenie pustego znaku tam, gdzie wstawiliśmy NaN
+    df.to_csv(csv_path, index=False, encoding='utf-8', na_rep='')
+    
+    xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z.xlsx")
     with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Burze_v2')
+        df.to_excel(writer, index=False, sheet_name='Burze_v2', na_rep='')
         ws = writer.sheets['Burze_v2']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
         
-        # USPRAWNIENIE: Bezpieczne, dynamiczne wyznaczanie zakresów kolumn zamiast twardych liter
         def find_col_range(col_name):
             if col_name in df.columns:
                 col_idx = df.columns.get_loc(col_name)
@@ -546,17 +571,11 @@ def save_outputs(df):
                 return f"{letter}2:{letter}300"
             return None
 
-        r_cape = find_col_range("CAPE [J/kg]")
-        if r_cape: ws.conditional_format(r_cape, {'type': 'cell', 'criteria': '>=', 'value': 1000, 'format': red})
-        
-        r_ship = find_col_range("SHIP")
-        if r_ship: ws.conditional_format(r_ship, {'type': 'cell', 'criteria': '>=', 'value': 1.2, 'format': red})
-            
-        r_stp = find_col_range("STP (stary)")
-        if r_stp: ws.conditional_format(r_stp, {'type': 'cell', 'criteria': '>=', 'value': 1.0, 'format': red})
-            
-        r_prob = find_col_range("Prob Burzy [%]")
-        if r_prob: ws.conditional_format(r_prob, {'type': 'cell', 'criteria': '>=', 'value': 70, 'format': red})
+        # Warunkowe kolorowanie
+        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), 
+                                 ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
+            r_col = find_col_range(col_name)
+            if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
             
     return [csv_path, xlsx_path]
 
@@ -572,12 +591,10 @@ def upload_to_ftp(files):
         
         for p in files:
             if p.endswith('.csv'):
-                # 1. Główny plik tablicowy gfs-conv.csv w katalogu głównym
                 with open(p, "rb") as f:
                     ftp.storbinary("STOR gfs-conv.csv", f)
                     print("  📤 Wysłano na FTP (nadpisano): gfs-conv.csv", flush=True)
                 
-                # 2. Archiwizacja pliku CSV do unikalnego folderu archiv_conv
                 arch_dir = "/stacja.meteo-krosno.pl/archiv_conv"
                 try:
                     ftp.cwd(arch_dir)
@@ -604,7 +621,7 @@ def upload_to_ftp(files):
 
 if __name__ == "__main__":
     print(f"\n==========================================")
-    print(f"🚀 START: GFS CONVECTION v9 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
+    print(f"🚀 START: GFS CONVECTION v10 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
     print(f"==========================================\n", flush=True)
     
     start_time = datetime.utcnow()
