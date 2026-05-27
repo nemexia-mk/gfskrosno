@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v9_ultimate.py - WERSJA NAPRAWIONA (W PEŁNI DZIAŁAJĄCE INDEKSY I OPADY) + ARCHIWUM FTP
+# gfs_conv_v9_ultimate.py - WERSJA ZAAWANSOWANA (Z OPTYMALIZACJĄ INDEKSÓW, OROGRAFII I ARCHIWUM)
 import os
 import requests
 import xarray as xr
@@ -195,14 +195,43 @@ def calc_full_stp(sbcape, lcl_h, srh01, dls06, sbcin):
     if any(np.isnan(x) for x in [sbcape, lcl_h, srh01, dls06, sbcin]): return np.nan
     return round(max(0, min((min(sbcape/1500,1.5) * max(0,(2000-lcl_h)/1000) * min(srh01/150,1.5) * min(dls06/20,1.5) * max(0,(200+sbcin)/150)), 8.0)), 2)
 
-def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, foehn=False, orographic=1.0):
+# NOWE USPRAWNIENIE: Logika niszczącego wiatru (Downburst / Microburst)
+def calc_wind_risk(dcape, rh700, dls06, cape):
+    base_dcape = dcape if (not np.isnan(dcape) and isinstance(dcape, (int, float))) else (cape * 0.35 if not np.isnan(cape) else 0.0)
+    if base_dcape < 300: return 0.0
+    score = min(base_dcape / 1100.0, 1.0) * 45
+    if not np.isnan(rh700):
+        if rh700 < 45: score += 25
+        elif rh700 < 65: score += 15
+    if not np.isnan(dls06):
+        if dls06 > 22: score += 30
+        elif dls06 > 13: score += 15
+    return float(np.clip(np.round(score, 0), 0, 100))
+
+# NOWE USPRAWNIENIE: Zmiana parametrów i dodanie wpływu prędkości burzy (Flash Flood Risk)
+def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn=False, orographic=1.0):
     if np.isnan(pwat) or pwat < 20: return 0.0
     score = min(pwat/40,1)*35 + (min(rh850/90,1)*20 if not np.isnan(rh850) else 0) + (min(rh700/85,1)*15 if not np.isnan(rh700) else 0)
     if not np.isnan(vvel850) and vvel850 < 0: score += min(abs(vvel850)/0.8,1)*15
     if not np.isnan(dls06) and 10 < dls06 < 25: score += 10
+    
+    # Uwzględnienie prędkości przemieszczania komórek
+    if not np.isnan(storm_speed):
+        if storm_speed < 5.0: score += 20     # Układ stacjonarny - ekstremalne ryzyko zalania punktowego
+        elif storm_speed < 10.0: score += 10
+        elif storm_speed > 18.0: score -= 15    # Szybki układ - opad rozłożony w przestrzeni
+        
     score *= orographic
     if foehn: score *= 0.6
     return float(np.clip(round(score,0),0,100))
+
+# NOWE USPRAWNIENIE: Zbiorczy indeks zagrożenia (0-3)
+def calc_threat_level(prob_ulewa, prob_grad, prob_wiatr):
+    max_prob = max(prob_ulewa, prob_grad, prob_wiatr)
+    if max_prob < 25: return 0
+    elif max_prob < 50: return 1
+    elif max_prob < 75: return 2
+    return 3
 
 def classify_storm_mode(cape, dls06, srh3, cin, lcl, prob):
     if prob < 15 or np.isnan(cape) or cape < 100: return ""
@@ -218,7 +247,6 @@ def calc_orographic_factor(wdir, wspd):
     angle_diff = min(abs(wdir - 220), 360 - abs(wdir - 220))
     return round(min(1.0 + 0.6 * np.sin(np.radians(angle_diff)) * min(wspd/15, 1.2), 1.8), 2)
 
-# NOWA FUNKCJA LCL
 def lcl_height_m(t2m_c, td2m_c):
     if np.isnan(t2m_c) or np.isnan(td2m_c): return np.nan
     diff = t2m_c - td2m_c
@@ -285,7 +313,7 @@ def process_local_gribs(forecast_hours):
             ds_sfc = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "instant"})
             ds_accum = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "accum"})
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
-            ds_tp = try_open_by_filter(path, {"shortName": "tp"})  # NAPRAWA OPADU
+            ds_tp = try_open_by_filter(path, {"shortName": "tp"})
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
             ds_pwat = try_open_by_filter(path, {"typeOfLevel": "atmosphereSingleLayer"})
@@ -300,7 +328,7 @@ def process_local_gribs(forecast_hours):
 
             # Odczyt Podstawowych Zmiennych
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
-            td2m = safe_get_point(ds_2m, ['d2m', '2d', 'DPT']) - 273.15 # NAPRAWA LCL
+            td2m = safe_get_point(ds_2m, ['d2m', '2d', 'DPT']) - 273.15
             cape = safe_get_point(ds_sfc, ['cape', 'CAPE'])
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
             li = safe_get_point(ds_sfc, ['lftx', 'LFTX'])
@@ -322,6 +350,8 @@ def process_local_gribs(forecast_hours):
             v925 = safe_get_point(ds_925, ['v', 'VGRD'])
             u700 = safe_get_point(ds_700, ['u', 'UGRD'])
             v700 = safe_get_point(ds_700, ['v', 'VGRD'])
+            u850 = safe_get_point(ds_850, ['u', 'UGRD'])
+            v850 = safe_get_point(ds_850, ['v', 'VGRD'])
 
             # =================== NAPRAWA OPADU ====================
             prate = safe_get_point(ds_prate, ['prate', 'PRATE'])
@@ -344,16 +374,22 @@ def process_local_gribs(forecast_hours):
 
             # =================== OBLICZENIA POCHODNE ====================
             wdir = wind_direction(u10, v10)
-            foehn = is_foehn_wind(wdir)
+            
+            # USPRAWNIENIE: Detekcja halnego z poziomu grzbietów (850 hPa) zamiast zakłóconej warstwy 10m
+            wdir850 = wind_direction(u850, v850)
+            foehn = is_foehn_wind(wdir850)
+            
             orog_factor = calc_orographic_factor(wdir, np.hypot(u10, v10) if not np.isnan(u10) else np.nan)
 
             dls06 = np.hypot(u500 - u10, v500 - v10) if not any(np.isnan([u500, u10])) else np.nan
             dls01 = np.hypot(u925 - u10, v925 - v10) if not any(np.isnan([u925, u10])) else np.nan
             lr_700_500 = (t700 - t500) / 2.0 if not any(np.isnan([t700, t500])) else np.nan
             brn = calc_brn(cape, dls06)
-            lcl = lcl_height_m(t2m, td2m) # NOWY LCL Z TD2M!
+            lcl = lcl_height_m(t2m, td2m)
 
             u_storm, v_storm = estimate_storm_motion(u10, v10, u500, v500)
+            storm_speed = np.hypot(u_storm, v_storm) if not (np.isnan(u_storm) or np.isnan(v_storm)) else np.nan
+            
             srh_01 = calc_srh_layer(u10, v10, u925, v925, u_storm, v_storm)
             
             srh3_manual = calc_srh_layer(u10, v10, u700, v700, u_storm, v_storm) * 1.3
@@ -419,18 +455,30 @@ def process_local_gribs(forecast_hours):
             rot_type = supercell_rotation_type(srh3, supercell_risk)
             hail = estimate_hail_size(cape, lr_700_500, dls06)
 
-            heavy_rain = calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, foehn, orog_factor)
+            # Obliczanie ulepszonego prawdopodobieństwa ulewy oraz nowego parametru wiatru
+            prob_ulewa = calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn, orog_factor)
+            prob_wiatr = calc_wind_risk(dcape, rh700, dls06, cape)
+            
             prob_temp = min(cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
 
+            # USPRAWNIENIE: Detekcja tornad niesuperkomórkowych (NST) przy niskim ścinaniu, niskim LCL i wysokim CAPE dolnym
             prob_tornado = min(max(0, (stp_full or 0) * 25 + (srh3 / 300 * 30 if not np.isnan(srh3) else 0)), 100)
+            if not np.isnan(dls06) and dls06 < 12.0:
+                if not np.isnan(cape) and cape > 150 and not np.isnan(lcl) and lcl < 900:
+                    nst_score = min(30.0, (cape / 800.0) * 15 + ((1000 - lcl) / 1000) * 15)
+                    prob_tornado = max(prob_tornado, nst_score)
+
             prob_grad = min(max(0, (ship or 0) * 35 + (cape / 2000 * 25)), 100)
-            prob_ulewa = heavy_rain
 
             if foehn:
                 prob_old = int(prob_old * 0.65)
                 prob_tornado = int(prob_tornado * 0.5)
                 prob_grad = int(prob_grad * 0.6)
+                prob_wiatr = int(prob_wiatr * 0.7) # Halny tłumi silne prądy zstępujące przez rozbijanie termiki komórek
+
+            # Obliczenie zbiorczego indeksu zagrożenia
+            threat_level = calc_threat_level(prob_ulewa, prob_grad, prob_wiatr)
 
             rows.append({
                 "Czas": datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh),
@@ -453,16 +501,17 @@ def process_local_gribs(forecast_hours):
                 "LCL [m]": lcl,
                 "Opad [mm/h]": round(rain_hour, 1),
                 "Kumulacyjny opad [mm]": round(cumulative_rain, 1),
-                "Heavy Rain Pot [%]": heavy_rain,
                 "Prob Burzy [%]": prob_old,
                 "Prob Tornado [%]": round(prob_tornado, 0),
                 "Prob Grad [%]": round(prob_grad, 0),
+                "Prob Wiatr [%]": round(prob_wiatr, 0),
                 "Prob Ulewa [%]": prob_ulewa,
                 "Storm Mode": storm_mode,
                 "Rotacja": rot_type,
                 "Grad [cm]": hail,
                 "Halny": "TAK" if foehn else "NIE",
-                "Orografia": orog_factor
+                "Orografia": orog_factor,
+                "Zagrożenie": threat_level
             })
             print("OK", flush=True)
         except Exception as e:
@@ -483,14 +532,32 @@ def save_outputs(df):
     csv_path = os.path.join(OUTPUT_DIR, "gfs-conv.csv")
     df.to_csv(csv_path, index=False, encoding='utf-8')
     xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z.xlsx")
+    
     with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Burze_v2')
         ws = writer.sheets['Burze_v2']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
-        ws.conditional_format('D2:D300', {'type': 'cell', 'criteria': '>=', 'value': 1000, 'format': red})
-        ws.conditional_format('P2:P300', {'type': 'cell', 'criteria': '>=', 'value': 1.2, 'format': red})
-        ws.conditional_format('R2:R300', {'type': 'cell', 'criteria': '>=', 'value': 1.0, 'format': red})
-        ws.conditional_format('S2:S300', {'type': 'cell', 'criteria': '>=', 'value': 70, 'format': red})
+        
+        # USPRAWNIENIE: Bezpieczne, dynamiczne wyznaczanie zakresów kolumn zamiast twardych liter
+        def find_col_range(col_name):
+            if col_name in df.columns:
+                col_idx = df.columns.get_loc(col_name)
+                letter = chr(65 + col_idx) if col_idx < 26 else chr(65 + col_idx // 26 - 1) + chr(65 + col_idx % 26)
+                return f"{letter}2:{letter}300"
+            return None
+
+        r_cape = find_col_range("CAPE [J/kg]")
+        if r_cape: ws.conditional_format(r_cape, {'type': 'cell', 'criteria': '>=', 'value': 1000, 'format': red})
+        
+        r_ship = find_col_range("SHIP")
+        if r_ship: ws.conditional_format(r_ship, {'type': 'cell', 'criteria': '>=', 'value': 1.2, 'format': red})
+            
+        r_stp = find_col_range("STP (stary)")
+        if r_stp: ws.conditional_format(r_stp, {'type': 'cell', 'criteria': '>=', 'value': 1.0, 'format': red})
+            
+        r_prob = find_col_range("Prob Burzy [%]")
+        if r_prob: ws.conditional_format(r_prob, {'type': 'cell', 'criteria': '>=', 'value': 70, 'format': red})
+            
     return [csv_path, xlsx_path]
 
 def upload_to_ftp(files):
@@ -505,12 +572,12 @@ def upload_to_ftp(files):
         
         for p in files:
             if p.endswith('.csv'):
-                # 1. Wysyłka głównego pliku csv
+                # 1. Główny plik tablicowy gfs-conv.csv w katalogu głównym
                 with open(p, "rb") as f:
                     ftp.storbinary("STOR gfs-conv.csv", f)
                     print("  📤 Wysłano na FTP (nadpisano): gfs-conv.csv", flush=True)
                 
-                # 2. Wysyłka pliku do archiwum (folder archiv_conv)
+                # 2. Archiwizacja pliku CSV do unikalnego folderu archiv_conv
                 arch_dir = "/stacja.meteo-krosno.pl/archiv_conv"
                 try:
                     ftp.cwd(arch_dir)
@@ -518,16 +585,13 @@ def upload_to_ftp(files):
                     ftp.mkd(arch_dir)
                     ftp.cwd(arch_dir)
                 
-                # Format nazwy: gfs_conv_tab_YYYY_MM_DD_HH.csv
                 arch_name = f"gfs_conv_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
                 with open(p, "rb") as f:
                     ftp.storbinary(f"STOR {arch_name}", f)
                     print(f"  📤 Wysłano na FTP (archiwum): {arch_name}", flush=True)
                 
-                # Powrót do katalogu głównego
                 ftp.cwd("/stacja.meteo-krosno.pl/")
             else:
-                # 3. Wysyłka pozostałych plików (np. .xlsx)
                 target = os.path.basename(p)
                 with open(p, "rb") as f:
                     ftp.storbinary(f"STOR {target}", f)
