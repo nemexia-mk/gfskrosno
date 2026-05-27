@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v11_ultimate.py - WERSJA Z DERECHO (DCP), BŁYSKAMI I POPRAWIONĄ ROTACJĄ/OPADEM
+# gfs_conv_v12_ultimate.py - NAPRAWIONY OPAD, ROTACJA >20%, CZYSTE POLA I SKALA ESTOFEX
 import os
 import requests
 import xarray as xr
@@ -81,7 +81,7 @@ def safe_get_point(ds, possible_names):
             except: continue
     return np.nan
 
-# ==================== ALGORYTMY PODSTAWOWE ====================
+# ==================== ALGORYTMY ====================
 def estimate_storm_motion(u10, v10, u500, v500):
     if any(np.isnan(x) for x in [u10, v10, u500, v500]): return np.nan, np.nan
     u_mean, v_mean = (u10 + u500) / 2.0, (v10 + v500) / 2.0
@@ -113,39 +113,29 @@ def calc_stp(cape, srh1, dls06, lcl):
     return float(round(max(0, min((cape/1500)*(srh1/150)*(dls06/20)*max(0, (2000-lcl)/1000), 8.0)), 2))
 
 def supercell_rotation_type(srh3):
-    if np.isnan(srh3): return np.nan
+    if np.isnan(srh3): return ""
     if srh3 > 50: return "Prawoskrętna"
     elif srh3 < -30: return "Lewoskrętna"
-    return np.nan
+    return ""
 
-# ==================== ALGORYTMY EKSTREMALNE (ZMIENIONE I NOWE) ====================
-
-# 1. DCP - Derecho Composite Parameter (Bow Echo / Derecho Risk)
 def calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500):
     if any(np.isnan(x) for x in [mucape, dcape, dls06]): return np.nan
     if mucape < 100 or dcape < 100: return np.nan
-
-    # Obliczanie średniego wiatru 0-6 km (w węzłach)
     wsfc = np.hypot(u10, v10) if not np.isnan(u10) else 0
     w850 = np.hypot(u850, v850) if not np.isnan(u850) else wsfc
     w700 = np.hypot(u700, v700) if not np.isnan(u700) else w850
     w500 = np.hypot(u500, v500) if not np.isnan(u500) else w700
-    
     mean_wind_knots = ((wsfc + w850 + w700 + w500) / 4.0) * 1.94384
     dls_knots = dls06 * 1.94384
-    
-    # Oryginalna formuła DCP
     dcp = (dcape / 980.0) * (mucape / 2000.0) * (dls_knots / 40.0) * (mean_wind_knots / 32.0)
     return float(np.round(dcp, 2))
 
-# 2. Aktywność Elektryczna (Błyski na minutę)
 def calc_lightning_rate(cape, lcl, cin):
     if np.isnan(cape) or cape < 150: return np.nan
-    if not np.isnan(cin) and cin < -150: return np.nan # Zbyt silna inwersja tłumi błyski
-    
+    if not np.isnan(cin) and cin < -150: return np.nan 
     rate = (cape / 600.0) ** 1.3
     if not np.isnan(lcl) and lcl < 2000:
-        rate *= (2000 / max(lcl, 400)) # Niska baza podkręca ładowanie ładunków
+        rate *= (2000 / max(lcl, 400)) 
     return float(np.round(min(rate, 120.0), 1))
 
 def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn, foehn=False):
@@ -214,19 +204,23 @@ def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, f
     val = float(np.clip(round(score,0),0,100))
     return val if val > 0 else np.nan
 
-def calc_threat_level(prob_ulewa, prob_grad, prob_db, prob_tornado):
+# NOWOŚĆ: Skala Kategorii Zjawisk (ESTOFEX LEVEL)
+def get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado):
     p_u = prob_ulewa if not np.isnan(prob_ulewa) else 0.0
     p_g = prob_grad if not np.isnan(prob_grad) else 0.0
     p_w = prob_db if not np.isnan(prob_db) else 0.0
     p_t = prob_tornado if not np.isnan(prob_tornado) else 0.0
+    
     max_prob = max(p_u, p_g, p_w, p_t)
-    if max_prob < 15: return np.nan
-    elif max_prob < 40: return 1
-    elif max_prob < 70: return 2
-    return 3
+    
+    if max_prob < 15: return ""
+    elif max_prob < 40: return "1/MRGL"
+    elif max_prob < 70: return "2/SLGT"
+    elif max_prob < 90: return "3/ENH"
+    else: return "4/MDT"
 
 def classify_storm_mode(cape, dls06, srh3, cin, lcl, prob):
-    if np.isnan(prob) or prob < 15 or np.isnan(cape) or cape < 100: return np.nan
+    if np.isnan(prob) or prob < 15 or np.isnan(cape) or cape < 100: return ""
     if cin < -150 and cape > 800: return "Elevated"
     if dls06 < 10: return "Pulse / Zwykła"
     if dls06 > 25 and srh3 > 150 and cape > 800: return "Supercell (prawdopodobna)"
@@ -276,10 +270,11 @@ def download_missing_gribs_parallel(forecast_hours):
 
     with ThreadPoolExecutor(max_workers=1) as ex: ex.map(fetch_single, pending)
 
-# ==================== FORMATOWANIE WYNIKÓW ====================
+# ==================== FORMATOWANIE WYNIKÓW (CZYSTE POLA DLA PHP) ====================
 def fmt(val, decimals=0, zero_as_nan=True):
-    if val is None or pd.isna(val) or np.isnan(val): return np.nan
-    if zero_as_nan and val == 0: return np.nan
+    if val is None or pd.isna(val) or np.isnan(val): return ""
+    if isinstance(val, str): return val
+    if zero_as_nan and val == 0: return ""
     if decimals == 0: return int(round(val))
     return round(val, decimals)
 
@@ -297,9 +292,13 @@ def process_local_gribs(forecast_hours):
         try:
             print(f"  ▶ Analiza f{fh:03d}...", end=" ", flush=True)
             
-            # Wczytywanie
+            # PANCERNY ZESTAW ODCZYTU (Wszystkie stepTypes aby upewnić się, że pobierzemy opad)
             ds_sfc = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "instant"})
+            ds_avg = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "avg"})
+            ds_accum = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "accum"})
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
+            ds_tp = try_open_by_filter(path, {"shortName": "tp"})
+            
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
             ds_pwat = try_open_by_filter(path, {"typeOfLevel": "atmosphereSingleLayer"})
@@ -310,9 +309,8 @@ def process_local_gribs(forecast_hours):
             ds_850 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 850})
             ds_700 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 700})
 
-            datasets.extend([ds_sfc, ds_prate, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
+            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
 
-            # Odczyt Podstawowych Zmiennych
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
             td2m = safe_get_point(ds_2m, ['d2m', '2d', 'DPT']) - 273.15
             cape = safe_get_point(ds_sfc, ['cape', 'CAPE'])
@@ -339,15 +337,31 @@ def process_local_gribs(forecast_hours):
             u850 = safe_get_point(ds_850, ['u', 'UGRD'])
             v850 = safe_get_point(ds_850, ['v', 'VGRD'])
 
-            # =================== W PEŁNI NAPRAWIONY OPAD ====================
-            # Zliczamy TYLKO z PRATE, aby uniknąć fałszywych akumulacji APCP
-            prate = safe_get_point(ds_prate, ['prate', 'PRATE'])
+            # =================== NAPRAWA OPADU I KUMULACJI ====================
+            prate = np.nan
+            for ds_opad in [ds_avg, ds_prate, ds_sfc]:
+                val = safe_get_point(ds_opad, ['prate', 'PRATE'])
+                if not np.isnan(val):
+                    prate = val
+                    break
+                    
+            apcp = np.nan
+            for ds_opad in [ds_tp, ds_accum]:
+                val = safe_get_point(ds_opad, ['tp', 'apcp', 'APCP'])
+                if not np.isnan(val):
+                    apcp = val
+                    break
+
+            rain_3h = 0.0
+            rain_hour = 0.0
+            
+            # Priorytet ma PRATE (rate opadu jest zawsze prawidłowy dla danego okna)
             if not np.isnan(prate) and prate > 0:
                 rain_hour = prate * 3600.0
                 rain_3h = rain_hour * 3.0
-            else:
-                rain_hour = 0.0
-                rain_3h = 0.0
+            elif not np.isnan(apcp) and apcp > 0:
+                rain_3h = apcp
+                rain_hour = rain_3h / 3.0
 
             if fh > 0:
                 cumulative_rain += rain_3h
@@ -427,8 +441,8 @@ def process_local_gribs(forecast_hours):
             prob_old = calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh_01, pwat, lcl, lr_700_500, brn, foehn)
             prob_sc = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01, foehn)
             
-            # WARUNEK 1: Rotacja widoczna tylko gdy Prob SC > 20%
-            rot_type = np.nan
+            # OGRANICZENIE ROTACJI: Wyświetla się tylko jeśli Prob SC przekracza 20%
+            rot_type = ""
             if not np.isnan(prob_sc) and prob_sc > 20:
                 rot_type = supercell_rotation_type(srh3)
                 
@@ -436,12 +450,11 @@ def process_local_gribs(forecast_hours):
 
             prob_ulewa = calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn, orog_factor)
             
-            # WARUNEK 2: Ulewa wyświetla się tylko jeśli modelowy opad wynosi minimum 1.0 mm/h
+            # OGRANICZENIE ULEWY: Prawdopodobieństwo pojawi się tylko gdy opad wynosi >= 1.0 mm/h
             if rain_hour < 1.0: prob_ulewa = np.nan
             
             prob_db = calc_wind_risk(dcape, rh700, dls06, cape) 
             
-            # DOJAZDOWE FUNKCJE: DCP oraz Aktywność Elektryczna
             dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
             lightning = calc_lightning_rate(cape, lcl, cin)
             
@@ -468,7 +481,8 @@ def process_local_gribs(forecast_hours):
                 if not np.isnan(prob_db): prob_db *= 0.7
                 if not np.isnan(prob_sc): prob_sc *= 0.55
 
-            threat_level = calc_threat_level(prob_ulewa, prob_grad, prob_db, prob_tornado)
+            # SKALA KATEGORII ZJAWISK ESTOFEX
+            estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado)
 
             rows.append({
                 "Czas": datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh),
@@ -476,7 +490,7 @@ def process_local_gribs(forecast_hours):
                 "T2M [°C]": fmt(t2m, 1, False),
                 "CAPE [J/kg]": fmt(cape, 0, True),
                 "MUCAPE [J/kg]": fmt(mucape, 0, True),
-                "DCAPE [J/kg]": fmt(dcape, 0, True), # POPRAWKA: DCAPE obok reszty
+                "DCAPE [J/kg]": fmt(dcape, 0, True),
                 "CIN [J/kg]": fmt(cin, 0, False),
                 "DLS 0-6km [m/s]": fmt(dls06, 1, True),
                 "DLS 0-1km [m/s]": fmt(dls01, 1, True),
@@ -489,8 +503,8 @@ def process_local_gribs(forecast_hours):
                 "EHI": fmt(ehi, 2, True),
                 "PWAT [mm]": fmt(pwat, 1, True),
                 "LCL [m]": fmt(lcl, 0, False),
-                "Opad [mm/h]": fmt(rain_hour, 1, True),
-                "Kumulacyjny opad [mm]": fmt(cumulative_rain, 1, True),
+                "Opad [mm/h]": fmt(rain_hour, 1, False),
+                "Kumulacyjny opad [mm]": fmt(cumulative_rain, 1, False),
                 "Prob Burzy [%]": fmt(prob_old, 0, True),
                 "Prob SC [%]": fmt(prob_sc, 0, True),
                 "Prob Tornado [%]": fmt(prob_tornado, 0, True),
@@ -500,11 +514,11 @@ def process_local_gribs(forecast_hours):
                 "Storm Mode": storm_mode,
                 "Rotacja": rot_type,
                 "Grad [cm]": fmt(hail, 1, True),
-                "DCP (Derecho)": fmt(dcp, 2, True),       # DOJAZDOWA FUNKCJA
-                "Błyski [1/min]": fmt(lightning, 1, True),# DOJAZDOWA FUNKCJA
-                "Halny": "TAK" if foehn else np.nan,
+                "DCP (Derecho)": fmt(dcp, 2, True),
+                "Błyski [1/min]": fmt(lightning, 1, True),
+                "Halny": "TAK" if foehn else "",
                 "Orografia": fmt(orog_factor, 2, False),
-                "Zagrożenie": fmt(threat_level, 0, True)
+                "Poziom (ESTOFEX)": estofex_category
             })
             print("OK", flush=True)
         except Exception as e:
@@ -522,11 +536,11 @@ def process_local_gribs(forecast_hours):
 def save_outputs(df):
     if df.empty: return []
     csv_path = os.path.join(OUTPUT_DIR, "gfs-conv.csv")
-    df.to_csv(csv_path, index=False, encoding='utf-8', na_rep='')
+    df.to_csv(csv_path, index=False, encoding='utf-8')
     
     xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z.xlsx")
     with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Burze_v2', na_rep='')
+        df.to_excel(writer, index=False, sheet_name='Burze_v2')
         ws = writer.sheets['Burze_v2']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
         
@@ -585,7 +599,7 @@ def upload_to_ftp(files):
 
 if __name__ == "__main__":
     print(f"\n==========================================")
-    print(f"🚀 START: GFS CONVECTION v11 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
+    print(f"🚀 START: GFS CONVECTION v12 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
     print(f"==========================================\n", flush=True)
     
     start_time = datetime.utcnow()
