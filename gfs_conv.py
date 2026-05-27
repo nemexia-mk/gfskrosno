@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v9_ultimate.py - WERSJA NAPRAWIONA (W PEŁNI DZIAŁAJĄCE INDEKSY I OPADY)
+# gfs_conv_v9_ultimate.py - WERSJA NAPRAWIONA (W PEŁNI DZIAŁAJĄCE INDEKSY I OPADY) + ARCHIWUM FTP
 import os
 import requests
 import xarray as xr
@@ -499,15 +499,42 @@ def upload_to_ftp(files):
     if not all([host, user, pswd]): return
     try:
         print("\n[FTP] Łączenie...", flush=True)
-        from ftplib import FTP
+        from ftplib import FTP, error_perm
         ftp = FTP(host, user, pswd, timeout=40)
         ftp.cwd("/stacja.meteo-krosno.pl/")
+        
         for p in files:
-            target = "gfs-conv.csv" if p.endswith('.csv') else os.path.basename(p)
-            with open(p, "rb") as f:
-                ftp.storbinary(f"STOR {target}", f)
+            if p.endswith('.csv'):
+                # 1. Wysyłka głównego pliku csv
+                with open(p, "rb") as f:
+                    ftp.storbinary("STOR gfs-conv.csv", f)
+                    print("  📤 Wysłano na FTP (nadpisano): gfs-conv.csv", flush=True)
+                
+                # 2. Wysyłka pliku do archiwum (folder archiv_conv)
+                arch_dir = "/stacja.meteo-krosno.pl/archiv_conv"
+                try:
+                    ftp.cwd(arch_dir)
+                except error_perm:
+                    ftp.mkd(arch_dir)
+                    ftp.cwd(arch_dir)
+                
+                # Format nazwy: gfs_conv_tab_YYYY_MM_DD_HH.csv
+                arch_name = f"gfs_conv_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
+                with open(p, "rb") as f:
+                    ftp.storbinary(f"STOR {arch_name}", f)
+                    print(f"  📤 Wysłano na FTP (archiwum): {arch_name}", flush=True)
+                
+                # Powrót do katalogu głównego
+                ftp.cwd("/stacja.meteo-krosno.pl/")
+            else:
+                # 3. Wysyłka pozostałych plików (np. .xlsx)
+                target = os.path.basename(p)
+                with open(p, "rb") as f:
+                    ftp.storbinary(f"STOR {target}", f)
+                    print(f"  📤 Wysłano na FTP: {target}", flush=True)
+                    
         ftp.quit()
-        print("[FTP] ✅ Pliki wysłane na serwer", flush=True)
+        print("[FTP] ✅ Wszystkie pliki wysłane na serwer", flush=True)
     except Exception as e:
         print(f"[FTP ERROR] ❌ Błąd: {e}", flush=True)
 
