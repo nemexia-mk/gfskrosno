@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v13_ultimate.py - CZYSTY FRONTEND (FILTRY ZJAWISK, OROGRAFIA %, CZYSTE DCP)
+# gfs_conv_v14_ultimate.py - KROK 1H, ASYNC DOWNLOAD (AIOHTTP), CONVECTION BUSTER
 import os
 import requests
 import xarray as xr
@@ -8,9 +8,17 @@ import pandas as pd
 from datetime import datetime, timedelta, time
 from time import sleep
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
 import warnings
 warnings.filterwarnings("ignore")
+
+# Moduł Asynchroniczny
+try:
+    import asyncio
+    import aiohttp
+    ASYNC_AVAILABLE = True
+except ImportError:
+    ASYNC_AVAILABLE = False
+    print("[INFO] Biblioteka aiohttp brakująca. Użyję wolniejszego pobierania sekwencyjnego. Aby przyspieszyć, wpisz: pip install aiohttp", flush=True)
 
 try:
     import metpy.calc as mpcalc
@@ -50,14 +58,17 @@ else:
 CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
 BASE_URL = "https://nomads.ncep.noaa.gov/cgi-bin/filter_gfs_0p25.pl"
 HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-FORECAST_HOURS = list(range(0, 384, 3))
 
+# NOWOŚĆ: Rozdzielczość 1-godzinna do +120h, następnie 3-godzinna
+FORECAST_HOURS = list(range(0, 121, 1)) + list(range(123, 385, 3))
+
+# NOWOŚĆ: Dodano var_TCDC=on do pobierania Zachmurzenia
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on&lev_10_m_above_ground=on"
     "&lev_850_mb=on&lev_700_mb=on&lev_500_mb=on&lev_925_mb=on&lev_1000_mb=on"
     "&lev_surface=on&lev_entire_atmosphere_%28considered_as_a_single_layer%29=on"
     "&var_TMP=on&var_HGT=on&var_UGRD=on&var_VGRD=on&var_CAPE=on&var_CIN=on"
-    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on"
+    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on&var_TCDC=on"
     "&subregion=on"
     f"&toplat={TOP_LAT}&bottomlat={BOTTOM_LAT}&leftlon={LEFT_LON}&rightlon={RIGHT_LON}"
 )
@@ -209,9 +220,7 @@ def get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado):
     p_g = prob_grad if not np.isnan(prob_grad) else 0.0
     p_w = prob_db if not np.isnan(prob_db) else 0.0
     p_t = prob_tornado if not np.isnan(prob_tornado) else 0.0
-    
     max_prob = max(p_u, p_g, p_w, p_t)
-    
     if max_prob < 15: return ""
     elif max_prob < 40: return "1/MRGL"
     elif max_prob < 70: return "2/SLGT"
@@ -238,38 +247,71 @@ def lcl_height_m(t2m_c, td2m_c):
     if diff < 0: diff = 0.0
     return float(np.round(125.0 * diff, 1))
 
-# ==================== BEZPIECZNE POBIERANIE Z RETRY ====================
-def download_missing_gribs_parallel(forecast_hours):
-    print("\n[DOWNLOAD] Sprawdzam brakujące pliki GRIB...", flush=True)
+# ==================== ASYNCHRONICZNE POBIERANIE (AIOHTTP) ====================
+if ASYNC_AVAILABLE:
+    async def fetch_single_async(session, fh, sem):
+        grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
+        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        url = build_url(grib_filename)
+        
+        async with sem:
+            for attempt in range(4):
+                await asyncio.sleep(0.5) 
+                try:
+                    async with session.get(url, headers=HEADERS, timeout=60) as r:
+                        if r.status == 200:
+                            data = await r.read()
+                            if b"GRIB" in data[:12]:
+                                with open(local_path, "wb") as f: f.write(data)
+                                print(f"  ✅ [SUKCES] f{fh:03d}", flush=True)
+                                return True
+                        elif r.status == 403:
+                            print(f"  ⚠️ [BLOKADA 403] f{fh:03d} -> Czekam 10s...", flush=True)
+                            await asyncio.sleep(10 + attempt * 2)
+                        else:
+                            await asyncio.sleep(3)
+                except Exception:
+                    await asyncio.sleep(3)
+            print(f"  🛑 [PORAŻKA] f{fh:03d}", flush=True)
+            return False
+
+    async def download_all_async(pending):
+        sem = asyncio.Semaphore(8) # Bezpieczny limit asynchroniczny dla NOAA NOMADS
+        async with aiohttp.ClientSession() as session:
+            tasks = [fetch_single_async(session, fh, sem) for fh in pending]
+            await asyncio.gather(*tasks)
+
+def download_missing_gribs(forecast_hours):
     pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 45000]
     if not pending: 
         print("[DOWNLOAD] Wszystkie pliki obecne.", flush=True)
         return
     print(f"[DOWNLOAD] Pobieranie {len(pending)} plików...", flush=True)
 
-    def fetch_single(fh):
-        grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        url = build_url(grib_filename)
-        max_retries = 3
-        for attempt in range(max_retries):
-            sleep(1.5)
-            try:
-                r = requests.get(url, headers=HEADERS, timeout=120)
-                if r.status_code == 200 and b"GRIB" in r.content[:12]:
-                    with open(local_path, "wb") as f: f.write(r.content)
-                    print(f"  ✅ [SUKCES] f{fh:03d}", flush=True)
-                    return True
-                elif r.status_code == 403:
-                    sleep(10)
-                else:
-                    sleep(5)
-            except: sleep(5)
-        return False
+    if ASYNC_AVAILABLE:
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(download_all_async(pending))
+    else:
+        from concurrent.futures import ThreadPoolExecutor
+        def fetch_single(fh):
+            grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
+            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+            url = build_url(grib_filename)
+            for attempt in range(3):
+                sleep(1.5)
+                try:
+                    r = requests.get(url, headers=HEADERS, timeout=120)
+                    if r.status_code == 200 and b"GRIB" in r.content[:12]:
+                        with open(local_path, "wb") as f: f.write(r.content)
+                        print(f"  ✅ [SUKCES] f{fh:03d}", flush=True)
+                        return True
+                    elif r.status_code == 403: sleep(10)
+                    else: sleep(5)
+                except: sleep(5)
+            return False
+        with ThreadPoolExecutor(max_workers=1) as ex: ex.map(fetch_single, pending)
 
-    with ThreadPoolExecutor(max_workers=1) as ex: ex.map(fetch_single, pending)
-
-# ==================== FORMATOWANIE WYNIKÓW (CZYSTE POLA DLA PHP) ====================
+# ==================== FORMATOWANIE WYNIKÓW ====================
 def fmt(val, decimals=0, zero_as_nan=True):
     if val is None or pd.isna(val) or np.isnan(val): return ""
     if isinstance(val, str): return val
@@ -282,10 +324,13 @@ def process_local_gribs(forecast_hours):
     print("\n[ANALIZA] Rozpoczynam przetwarzanie plików GRIB...", flush=True)
     rows = []
     cumulative_rain = 0.0
+    prev_fh = 0
     
     for fh in forecast_hours:
         path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        if not os.path.exists(path): continue
+        if not os.path.exists(path): 
+            prev_fh = fh
+            continue
             
         datasets = []
         try:
@@ -296,6 +341,7 @@ def process_local_gribs(forecast_hours):
             ds_accum = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "accum"})
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
             ds_tp = try_open_by_filter(path, {"shortName": "tp"})
+            ds_tcc = try_open_by_filter(path, {"shortName": "tcc"}) # Zachmurzenie Całkowite
             
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
@@ -307,7 +353,9 @@ def process_local_gribs(forecast_hours):
             ds_850 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 850})
             ds_700 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 700})
 
-            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
+            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_tcc, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
+
+            valid_time = datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh)
 
             t2m = safe_get_point(ds_2m, ['t2m', '2t', 'TMP']) - 273.15
             td2m = safe_get_point(ds_2m, ['d2m', '2d', 'DPT']) - 273.15
@@ -315,6 +363,8 @@ def process_local_gribs(forecast_hours):
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
             li = safe_get_point(ds_sfc, ['lftx', 'LFTX'])
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
+            tcc = safe_get_point(ds_tcc, ['tcc', 'TCDC', 'tcdc']) # POBIERANIE ZACHMURZENIA
+            if np.isnan(tcc): tcc = 0.0
             
             t850 = safe_get_point(ds_850, ['t', 'TMP']) - 273.15
             t700 = safe_get_point(ds_700, ['t', 'TMP']) - 273.15
@@ -335,33 +385,28 @@ def process_local_gribs(forecast_hours):
             u850 = safe_get_point(ds_850, ['u', 'UGRD'])
             v850 = safe_get_point(ds_850, ['v', 'VGRD'])
 
-            # =================== OPAD I KUMULACJA ====================
+            # =================== OPAD I KUMULACJA DLA SKOKÓW 1H I 3H ====================
+            step_duration = fh - prev_fh if fh > 0 else 0
             prate = np.nan
             for ds_opad in [ds_avg, ds_prate, ds_sfc]:
                 val = safe_get_point(ds_opad, ['prate', 'PRATE'])
                 if not np.isnan(val):
-                    prate = val
-                    break
+                    prate = val; break
                     
             apcp = np.nan
             for ds_opad in [ds_tp, ds_accum]:
                 val = safe_get_point(ds_opad, ['tp', 'apcp', 'APCP'])
                 if not np.isnan(val):
-                    apcp = val
-                    break
+                    apcp = val; break
 
-            rain_3h = 0.0
             rain_hour = 0.0
-            
             if not np.isnan(prate) and prate > 0:
                 rain_hour = prate * 3600.0
-                rain_3h = rain_hour * 3.0
-            elif not np.isnan(apcp) and apcp > 0:
-                rain_3h = apcp
-                rain_hour = rain_3h / 3.0
+            elif not np.isnan(apcp) and apcp > 0 and step_duration > 0:
+                rain_hour = apcp / step_duration
 
             if fh > 0:
-                cumulative_rain += rain_3h
+                cumulative_rain += (rain_hour * step_duration)
 
             # =================== OBLICZENIA POCHODNE ====================
             wdir = wind_direction(u10, v10)
@@ -460,8 +505,18 @@ def process_local_gribs(forecast_hours):
                 if not np.isnan(prob_db): prob_db *= 0.7
                 if not np.isnan(prob_sc): prob_sc *= 0.55
 
-            # ======= NOWOŚĆ: LOGIKA OGRANICZENIA WYŚWIETLANIA ZJAWISK (FILTR SZUMU) =======
-            # Jeśli brak szans na konwekcję (<= 25%), wygaszamy parametry zjawisk towarzyszących
+            # ======= NOWOŚĆ: CONVECTION BUSTER (ZABÓJCA KONWEKCJI) =======
+            buster_active = False
+            # Sprawdzamy czy jest środek dnia (11:00-18:00 czasu lokalnego, czyli 09-16 UTC)
+            if 9 <= valid_time.hour <= 16 and tcc > 85.0 and base_cape > 100:
+                buster_active = True
+                if not np.isnan(prob_old): prob_old *= 0.4    # Tniemy szanse o 60%
+                if not np.isnan(prob_sc): prob_sc *= 0.4
+                if not np.isnan(prob_tornado): prob_tornado *= 0.4
+                if not np.isnan(prob_db): prob_db *= 0.5
+                if not np.isnan(prob_grad): prob_grad *= 0.4
+
+            # ======= FILTR SZUMU ZJAWISK (>25% BURZY) =======
             if np.isnan(prob_old) or prob_old <= 25:
                 prob_sc = np.nan
                 prob_tornado = np.nan
@@ -469,34 +524,32 @@ def process_local_gribs(forecast_hours):
                 prob_db = np.nan
                 prob_ulewa = np.nan
 
-            # Warunek dla Ulewy: Opad min 2.0 mm/h
             if rain_hour < 2.0:
                 prob_ulewa = np.nan
 
-            # Rotacja widoczna tylko gdy Prob SC > 20%
             rot_type = ""
             if not np.isnan(prob_sc) and prob_sc > 20:
                 rot_type = supercell_rotation_type(srh3)
                 
             hail = estimate_hail_size(cape, lr_700_500, dls06)
-            
             dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
             lightning = calc_lightning_rate(cape, lcl, cin)
             
             prob_temp = min(base_cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
 
-            estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado)
+            # Podmiana nazwy trybu burzy jeśli aktywna blokada chmurowa
+            if buster_active and storm_mode != "":
+                storm_mode = "Zablokowana (Chmury)"
 
-            # Orografia do stringa %
+            estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado)
             orog_display = f"+{int(round((orog_factor - 1.0) * 100))}%" if orog_factor >= 1.05 else ""
-            
-            # DCP do stringa (tylko >= 0.2)
             dcp_display = fmt(dcp, 2, True) if (not np.isnan(dcp) and dcp >= 0.2) else ""
 
             rows.append({
-                "Czas": datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh),
+                "Czas": valid_time,
                 "T+": fh,
+                "Zachmurzenie [%]": fmt(tcc, 0, False), # NOWOŚĆ W TABELI
                 "T2M [°C]": fmt(t2m, 1, False),
                 "CAPE [J/kg]": fmt(cape, 0, True),
                 "MUCAPE [J/kg]": fmt(mucape, 0, True),
@@ -523,16 +576,18 @@ def process_local_gribs(forecast_hours):
                 "Prob Ulewa [%]": fmt(prob_ulewa, 0, True),
                 "Storm Mode": storm_mode,
                 "Rotacja": rot_type,
-                "Grad [cm]": fmt(hail, 1, True) if not np.isnan(prob_grad) else "", # Grad (rozmiar) ukryty jeśli nie ma ryzyka
+                "Grad [cm]": fmt(hail, 1, True) if not np.isnan(prob_grad) else "", 
                 "DCP (Derecho)": dcp_display,
                 "Błyski [1/min]": fmt(lightning, 1, True) if not np.isnan(prob_old) and prob_old > 25 else "",
                 "Halny": "TAK" if foehn else "",
                 "Orografia": orog_display,
                 "Poziom (ESTOFEX)": estofex_category
             })
+            prev_fh = fh
             print("OK", flush=True)
         except Exception as e:
             print(f"Błąd f{fh:03d}: {e}", flush=True)
+            prev_fh = fh
             continue
         finally:
             for ds in datasets:
@@ -561,7 +616,7 @@ def save_outputs(df):
                 return f"{letter}2:{letter}300"
             return None
 
-        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), 
+        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), ("DCP (Derecho)", 1.0), 
                                  ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
             r_col = find_col_range(col_name)
             if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
@@ -609,7 +664,7 @@ def upload_to_ftp(files):
 
 if __name__ == "__main__":
     print(f"\n==========================================")
-    print(f"🚀 START: GFS CONVECTION v13 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
+    print(f"🚀 START: GFS CONVECTION v14 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
     print(f"==========================================\n", flush=True)
     
     start_time = datetime.utcnow()
@@ -619,7 +674,7 @@ if __name__ == "__main__":
             print(f"\n[TIMEOUT] Zakończono wymuszonym limitem 90 minut.", flush=True)
             break
             
-        download_missing_gribs_parallel(FORECAST_HOURS)
+        download_missing_gribs(FORECAST_HOURS)
         df = process_local_gribs(FORECAST_HOURS)
         
         if not df.empty:
