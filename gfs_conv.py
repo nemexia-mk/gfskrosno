@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v16_ultimate.py - INDEKS DALEKICH OBSERWACJI I ZIELONE FORMATOWANIE
+# gfs_conv_v16_ultimate.py - USUNIĘTO CONVECTION BUSTER (ZACHMURZENIE)
 import os
 import requests
 import xarray as xr
@@ -11,13 +11,14 @@ from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings("ignore")
 
+# Moduł Asynchroniczny
 try:
     import asyncio
     import aiohttp
     ASYNC_AVAILABLE = True
 except ImportError:
     ASYNC_AVAILABLE = False
-    print("[INFO] Biblioteka aiohttp brakująca. Użyję wolniejszego pobierania sekwencyjnego. Aby przyspieszyć, wpisz: pip install aiohttp", flush=True)
+    print("[INFO] Biblioteka aiohttp brakująca. Użyję wolniejszego pobierania sekwencyjnego.", flush=True)
 
 try:
     import metpy.calc as mpcalc
@@ -71,7 +72,7 @@ STATIC_MIDDLE = (
     "&lev_surface=on&lev_entire_atmosphere_%28considered_as_a_single_layer%29=on"
     "&lev_entire_atmosphere=on" 
     "&var_TMP=on&var_HGT=on&var_UGRD=on&var_VGRD=on&var_CAPE=on&var_CIN=on"
-    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on&var_TCDC=on"
+    "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on"
     "&subregion=on"
     f"&toplat={TOP_LAT}&bottomlat={BOTTOM_LAT}&leftlon={LEFT_LON}&rightlon={RIGHT_LON}"
 )
@@ -250,41 +251,6 @@ def lcl_height_m(t2m_c, td2m_c):
     if diff < 0: diff = 0.0
     return float(np.round(125.0 * diff, 1))
 
-# ======= NOWOŚĆ: INDEKS DALEKICH OBSERWACJI =======
-def calc_teleobservation_index(t2m, td2m, rh850, rh700, pwat, wdir):
-    if any(np.isnan(x) for x in [t2m, td2m, rh850, rh700, pwat]): return np.nan
-    
-    score = 0.0
-    
-    if rh850 < 40: score += 35
-    elif rh850 < 60: score += 20
-    elif rh850 < 75: score += 10
-    elif rh850 > 90: score -= 30
-    
-    if rh700 < 40: score += 15
-    elif rh700 < 60: score += 10
-    
-    if pwat < 10: score += 25
-    elif pwat < 15: score += 15
-    elif pwat < 20: score += 5
-    elif pwat > 30: score -= 20
-    
-    spread = t2m - td2m
-    if spread > 12: score += 25
-    elif spread > 8: score += 15
-    elif spread > 5: score += 5
-    elif spread < 2.5: score -= 40
-    
-    if not np.isnan(wdir):
-        if 280 <= wdir <= 360 or 0 <= wdir <= 60:
-            score += 15
-            
-    # Twarda blokada - pełne chmury na szczytach lub ostra mgła
-    if rh850 > 95 or spread < 1.0:
-        score *= 0.1
-        
-    return float(np.clip(round(score, 0), 0, 100))
-
 # ==================== ASYNCHRONICZNE POBIERANIE (AIOHTTP) ====================
 if ASYNC_AVAILABLE:
     async def fetch_single_async(session, fh, sem):
@@ -383,9 +349,6 @@ def process_local_gribs(forecast_hours):
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
             ds_tp = try_open_by_filter(path, {"shortName": "tp"})
             
-            ds_tcc_avg = try_open_by_filter(path, {"shortName": "tcc", "stepType": "avg"})
-            ds_tcc_inst = try_open_by_filter(path, {"shortName": "tcc", "stepType": "instant"})
-            
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
             ds_pwat = try_open_by_filter(path, {"typeOfLevel": "atmosphereSingleLayer"})
@@ -396,7 +359,7 @@ def process_local_gribs(forecast_hours):
             ds_850 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 850})
             ds_700 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 700})
 
-            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_tcc_avg, ds_tcc_inst, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
+            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
 
             valid_time = datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh)
 
@@ -406,14 +369,6 @@ def process_local_gribs(forecast_hours):
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
             li = safe_get_point(ds_sfc, ['lftx', 'LFTX'])
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
-            
-            tcc = np.nan
-            for ds_cloud in [ds_tcc_avg, ds_tcc_inst]:
-                val = safe_get_point(ds_cloud, ['tcc', 'TCDC', 'tcdc'])
-                if not np.isnan(val):
-                    tcc = val
-                    break
-            if np.isnan(tcc): tcc = 0.0
             
             t850 = safe_get_point(ds_850, ['t', 'TMP']) - 273.15
             t700 = safe_get_point(ds_700, ['t', 'TMP']) - 273.15
@@ -549,15 +504,6 @@ def process_local_gribs(forecast_hours):
                 if not np.isnan(prob_db): prob_db *= 0.7
                 if not np.isnan(prob_sc): prob_sc *= 0.55
 
-            buster_active = False
-            if 9 <= valid_time.hour <= 16 and tcc > 85.0 and base_cape > 100:
-                buster_active = True
-                if not np.isnan(prob_old): prob_old *= 0.4    
-                if not np.isnan(prob_sc): prob_sc *= 0.4
-                if not np.isnan(prob_tornado): prob_tornado *= 0.4
-                if not np.isnan(prob_db): prob_db *= 0.5
-                if not np.isnan(prob_grad): prob_grad *= 0.4
-
             if np.isnan(prob_old) or prob_old <= 25:
                 prob_sc = np.nan
                 prob_tornado = np.nan
@@ -576,14 +522,8 @@ def process_local_gribs(forecast_hours):
             dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
             lightning = calc_lightning_rate(cape, lcl, cin)
             
-            # WYLICZENIE INDEKSU DALEKICH OBSERWACJI
-            tele_index = calc_teleobservation_index(t2m, td2m, rh850, rh700, pwat, wdir)
-            
             prob_temp = min(base_cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
-
-            if buster_active and storm_mode != "":
-                storm_mode = "Zablokowana (Chmury)"
 
             estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado)
             orog_display = f"+{int(round((orog_factor - 1.0) * 100))}%" if orog_factor >= 1.05 else ""
@@ -592,7 +532,6 @@ def process_local_gribs(forecast_hours):
             rows.append({
                 "Czas": valid_time,
                 "T+": fh,
-                "Zachmurzenie [%]": fmt(tcc, 0, False), 
                 "T2M [°C]": fmt(t2m, 1, False),
                 "CAPE [J/kg]": fmt(cape, 0, True),
                 "MUCAPE [J/kg]": fmt(mucape, 0, True),
@@ -622,7 +561,6 @@ def process_local_gribs(forecast_hours):
                 "Grad [cm]": fmt(hail, 1, True) if not np.isnan(prob_grad) else "", 
                 "DCP (Derecho)": dcp_display,
                 "Błyski [1/min]": fmt(lightning, 1, True) if not np.isnan(prob_old) and prob_old > 25 else "",
-                "Dalekie Obs. [%]": fmt(tele_index, 0, True), # NOWA KOLUMNA W CSV
                 "Halny": "TAK" if foehn else "",
                 "Orografia": orog_display,
                 "Poziom (ESTOFEX)": estofex_category
@@ -652,7 +590,6 @@ def save_outputs(df):
         df.to_excel(writer, index=False, sheet_name='Burze_v2', na_rep='')
         ws = writer.sheets['Burze_v2']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
-        green = writer.book.add_format({'bg_color': '#228B22', 'font_color': 'white'}) # NOWY FORMAT DLA ZIELONEGO
         
         def find_col_range(col_name):
             if col_name in df.columns:
@@ -661,15 +598,10 @@ def save_outputs(df):
                 return f"{letter}2:{letter}300"
             return None
 
-        # Czerwone Alarmy
         for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), ("DCP (Derecho)", 1.0), 
                                  ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
             r_col = find_col_range(col_name)
             if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
-            
-        # Zielone okno obserwacyjne
-        r_tele = find_col_range("Dalekie Obs. [%]")
-        if r_tele: ws.conditional_format(r_tele, {'type': 'cell', 'criteria': '>=', 'value': 65, 'format': green})
             
     return [csv_path, xlsx_path]
 
