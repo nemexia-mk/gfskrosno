@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v15_ultimate.py - NAPRAWIONE ZACHMURZENIE (TCDC LEVEL FIX) I CACHE
+# gfs_conv_v16_ultimate.py - INDEKS DALEKICH OBSERWACJI I ZIELONE FORMATOWANIE
 import os
 import requests
 import xarray as xr
@@ -11,7 +11,6 @@ from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings("ignore")
 
-# Moduł Asynchroniczny
 try:
     import asyncio
     import aiohttp
@@ -66,7 +65,6 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 FORECAST_HOURS = list(range(0, 121, 1)) + list(range(123, 385, 3))
 
-# NAPRAWA: Dodano &lev_entire_atmosphere=on co jest wymagane dla pobrania warstwy z chmurami (TCDC)
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on&lev_10_m_above_ground=on"
     "&lev_850_mb=on&lev_700_mb=on&lev_500_mb=on&lev_925_mb=on&lev_1000_mb=on"
@@ -252,12 +250,46 @@ def lcl_height_m(t2m_c, td2m_c):
     if diff < 0: diff = 0.0
     return float(np.round(125.0 * diff, 1))
 
+# ======= NOWOŚĆ: INDEKS DALEKICH OBSERWACJI =======
+def calc_teleobservation_index(t2m, td2m, rh850, rh700, pwat, wdir):
+    if any(np.isnan(x) for x in [t2m, td2m, rh850, rh700, pwat]): return np.nan
+    
+    score = 0.0
+    
+    if rh850 < 40: score += 35
+    elif rh850 < 60: score += 20
+    elif rh850 < 75: score += 10
+    elif rh850 > 90: score -= 30
+    
+    if rh700 < 40: score += 15
+    elif rh700 < 60: score += 10
+    
+    if pwat < 10: score += 25
+    elif pwat < 15: score += 15
+    elif pwat < 20: score += 5
+    elif pwat > 30: score -= 20
+    
+    spread = t2m - td2m
+    if spread > 12: score += 25
+    elif spread > 8: score += 15
+    elif spread > 5: score += 5
+    elif spread < 2.5: score -= 40
+    
+    if not np.isnan(wdir):
+        if 280 <= wdir <= 360 or 0 <= wdir <= 60:
+            score += 15
+            
+    # Twarda blokada - pełne chmury na szczytach lub ostra mgła
+    if rh850 > 95 or spread < 1.0:
+        score *= 0.1
+        
+    return float(np.clip(round(score, 0), 0, 100))
+
 # ==================== ASYNCHRONICZNE POBIERANIE (AIOHTTP) ====================
 if ASYNC_AVAILABLE:
     async def fetch_single_async(session, fh, sem):
-        # WAŻNE: Wymuszenie czystego pobierania nowych pakietów (v15)
         grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         url = build_url(grib_filename)
         
         async with sem:
@@ -288,7 +320,7 @@ if ASYNC_AVAILABLE:
             await asyncio.gather(*tasks)
 
 def download_missing_gribs(forecast_hours, global_attempt):
-    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
     
     if not pending: 
         print("[DOWNLOAD] Wszystkie pliki obecne w lokalnym cache.", flush=True)
@@ -303,7 +335,7 @@ def download_missing_gribs(forecast_hours, global_attempt):
         from concurrent.futures import ThreadPoolExecutor
         def fetch_single(fh):
             grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
             url = build_url(grib_filename)
             for attempt in range(1, 6):
                 sleep(1.5)
@@ -336,7 +368,7 @@ def process_local_gribs(forecast_hours):
     prev_fh = 0
     
     for fh in forecast_hours:
-        path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         if not os.path.exists(path) or os.path.getsize(path) < 5000: 
             prev_fh = fh
             continue
@@ -351,7 +383,6 @@ def process_local_gribs(forecast_hours):
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
             ds_tp = try_open_by_filter(path, {"shortName": "tp"})
             
-            # Pancerne wczytywanie zachmurzenia - próbujemy wyciągnąć ze stepType 'avg' i 'instant'
             ds_tcc_avg = try_open_by_filter(path, {"shortName": "tcc", "stepType": "avg"})
             ds_tcc_inst = try_open_by_filter(path, {"shortName": "tcc", "stepType": "instant"})
             
@@ -545,6 +576,9 @@ def process_local_gribs(forecast_hours):
             dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
             lightning = calc_lightning_rate(cape, lcl, cin)
             
+            # WYLICZENIE INDEKSU DALEKICH OBSERWACJI
+            tele_index = calc_teleobservation_index(t2m, td2m, rh850, rh700, pwat, wdir)
+            
             prob_temp = min(base_cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
 
@@ -588,6 +622,7 @@ def process_local_gribs(forecast_hours):
                 "Grad [cm]": fmt(hail, 1, True) if not np.isnan(prob_grad) else "", 
                 "DCP (Derecho)": dcp_display,
                 "Błyski [1/min]": fmt(lightning, 1, True) if not np.isnan(prob_old) and prob_old > 25 else "",
+                "Dalekie Obs. [%]": fmt(tele_index, 0, True), # NOWA KOLUMNA W CSV
                 "Halny": "TAK" if foehn else "",
                 "Orografia": orog_display,
                 "Poziom (ESTOFEX)": estofex_category
@@ -617,6 +652,7 @@ def save_outputs(df):
         df.to_excel(writer, index=False, sheet_name='Burze_v2', na_rep='')
         ws = writer.sheets['Burze_v2']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
+        green = writer.book.add_format({'bg_color': '#228B22', 'font_color': 'white'}) # NOWY FORMAT DLA ZIELONEGO
         
         def find_col_range(col_name):
             if col_name in df.columns:
@@ -625,10 +661,15 @@ def save_outputs(df):
                 return f"{letter}2:{letter}300"
             return None
 
+        # Czerwone Alarmy
         for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), ("DCP (Derecho)", 1.0), 
                                  ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
             r_col = find_col_range(col_name)
             if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
+            
+        # Zielone okno obserwacyjne
+        r_tele = find_col_range("Dalekie Obs. [%]")
+        if r_tele: ws.conditional_format(r_tele, {'type': 'cell', 'criteria': '>=', 'value': 65, 'format': green})
             
     return [csv_path, xlsx_path]
 
@@ -673,7 +714,7 @@ def upload_to_ftp(files):
 
 if __name__ == "__main__":
     print(f"\n==========================================")
-    print(f"🚀 START: GFS CONVECTION v15 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
+    print(f"🚀 START: GFS CONVECTION v16 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
     print(f"==========================================\n", flush=True)
     
     start_time = datetime.utcnow()
@@ -692,7 +733,7 @@ if __name__ == "__main__":
             files = save_outputs(df)
             upload_to_ftp(files)
             
-        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
         
         if not missing:
             print("\n🎉 [SUKCES] Wszystkie prognozy przetworzone i wysłane!", flush=True)
