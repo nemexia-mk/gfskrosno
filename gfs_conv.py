@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v15_ultimate.py - NAPRAWIONE WIDEŁKI CZASOWE, CACHE PLIKÓW I LICZNIKI PRÓB
+# gfs_conv_v15_ultimate.py - NAPRAWIONE ZACHMURZENIE (TCDC LEVEL FIX) I CACHE
 import os
 import requests
 import xarray as xr
@@ -40,7 +40,7 @@ KROSNO_LON = 21.77
 RETRY_INTERVAL_SECONDS = 600
 MAX_TOTAL_WAIT_MINUTES = 90
 
-# ==================== LOGIKA CZASU (ZGODNA Z HARMONOGRAMEM NOAA) ====================
+# ==================== LOGIKA CZASU ====================
 now = datetime.utcnow()
 current_time = now.time()
 
@@ -57,7 +57,7 @@ else:
     RUN_HOUR = "18"
     if current_time >= time(21, 30):
         RUN_DATE = now.strftime("%Y%m%d")
-    else: # Dla godzin 00:00 - 03:29 bieżącego dnia
+    else: 
         RUN_DATE = (now - timedelta(days=1)).strftime("%Y%m%d")
 
 CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
@@ -66,10 +66,12 @@ HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
 
 FORECAST_HOURS = list(range(0, 121, 1)) + list(range(123, 385, 3))
 
+# NAPRAWA: Dodano &lev_entire_atmosphere=on co jest wymagane dla pobrania warstwy z chmurami (TCDC)
 STATIC_MIDDLE = (
     "&lev_2_m_above_ground=on&lev_10_m_above_ground=on"
     "&lev_850_mb=on&lev_700_mb=on&lev_500_mb=on&lev_925_mb=on&lev_1000_mb=on"
     "&lev_surface=on&lev_entire_atmosphere_%28considered_as_a_single_layer%29=on"
+    "&lev_entire_atmosphere=on" 
     "&var_TMP=on&var_HGT=on&var_UGRD=on&var_VGRD=on&var_CAPE=on&var_CIN=on"
     "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on&var_TCDC=on"
     "&subregion=on"
@@ -253,12 +255,13 @@ def lcl_height_m(t2m_c, td2m_c):
 # ==================== ASYNCHRONICZNE POBIERANIE (AIOHTTP) ====================
 if ASYNC_AVAILABLE:
     async def fetch_single_async(session, fh, sem):
+        # WAŻNE: Wymuszenie czystego pobierania nowych pakietów (v15)
         grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         url = build_url(grib_filename)
         
         async with sem:
-            for attempt in range(1, 6): # Maksymalnie 5 prób dla pojedynczego pliku
+            for attempt in range(1, 6): 
                 await asyncio.sleep(0.5) 
                 try:
                     async with session.get(url, headers=HEADERS, timeout=60) as r:
@@ -285,8 +288,7 @@ if ASYNC_AVAILABLE:
             await asyncio.gather(*tasks)
 
 def download_missing_gribs(forecast_hours, global_attempt):
-    # LIMIT ZMIENIONY NA 5000 BAJTÓW: Zapobiega nadpisywaniu prawidłowych, małych plików 1-godzinnych
-    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
     
     if not pending: 
         print("[DOWNLOAD] Wszystkie pliki obecne w lokalnym cache.", flush=True)
@@ -301,7 +303,7 @@ def download_missing_gribs(forecast_hours, global_attempt):
         from concurrent.futures import ThreadPoolExecutor
         def fetch_single(fh):
             grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
             url = build_url(grib_filename)
             for attempt in range(1, 6):
                 sleep(1.5)
@@ -334,7 +336,7 @@ def process_local_gribs(forecast_hours):
     prev_fh = 0
     
     for fh in forecast_hours:
-        path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        path = os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         if not os.path.exists(path) or os.path.getsize(path) < 5000: 
             prev_fh = fh
             continue
@@ -348,7 +350,10 @@ def process_local_gribs(forecast_hours):
             ds_accum = try_open_by_filter(path, {"typeOfLevel": "surface", "stepType": "accum"})
             ds_prate = try_open_by_filter(path, {"shortName": "prate"})
             ds_tp = try_open_by_filter(path, {"shortName": "tp"})
-            ds_tcc = try_open_by_filter(path, {"shortName": "tcc"}) 
+            
+            # Pancerne wczytywanie zachmurzenia - próbujemy wyciągnąć ze stepType 'avg' i 'instant'
+            ds_tcc_avg = try_open_by_filter(path, {"shortName": "tcc", "stepType": "avg"})
+            ds_tcc_inst = try_open_by_filter(path, {"shortName": "tcc", "stepType": "instant"})
             
             ds_2m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 2})
             ds_10m = try_open_by_filter(path, {"typeOfLevel": "heightAboveGround", "level": 10})
@@ -360,7 +365,7 @@ def process_local_gribs(forecast_hours):
             ds_850 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 850})
             ds_700 = try_open_by_filter(path, {"typeOfLevel": "isobaricInhPa", "level": 700})
 
-            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_tcc, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
+            datasets.extend([ds_sfc, ds_avg, ds_accum, ds_prate, ds_tp, ds_tcc_avg, ds_tcc_inst, ds_2m, ds_10m, ds_pwat, ds_isobaric, ds_hlcy, ds_500, ds_925, ds_850, ds_700])
 
             valid_time = datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H") + timedelta(hours=fh)
 
@@ -370,7 +375,13 @@ def process_local_gribs(forecast_hours):
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
             li = safe_get_point(ds_sfc, ['lftx', 'LFTX'])
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
-            tcc = safe_get_point(ds_tcc, ['tcc', 'TCDC', 'tcdc']) 
+            
+            tcc = np.nan
+            for ds_cloud in [ds_tcc_avg, ds_tcc_inst]:
+                val = safe_get_point(ds_cloud, ['tcc', 'TCDC', 'tcdc'])
+                if not np.isnan(val):
+                    tcc = val
+                    break
             if np.isnan(tcc): tcc = 0.0
             
             t850 = safe_get_point(ds_850, ['t', 'TMP']) - 273.15
@@ -614,7 +625,7 @@ def save_outputs(df):
                 return f"{letter}2:{letter}300"
             return None
 
-        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), 
+        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), ("DCP (Derecho)", 1.0), 
                                  ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
             r_col = find_col_range(col_name)
             if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
@@ -681,7 +692,7 @@ if __name__ == "__main__":
             files = save_outputs(df)
             upload_to_ftp(files)
             
-        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v15_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
         
         if not missing:
             print("\n🎉 [SUKCES] Wszystkie prognozy przetworzone i wysłane!", flush=True)
