@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# gfs_conv_v16_ultimate.py - USUNIĘTO CONVECTION BUSTER (ZACHMURZENIE)
+# gfs_conv_v17_ultimate.py - KROSNO (Poprawki: 280m n.p.m., Tatry, Derecho, Storm Mode, Bugfix 2KB)
 import os
 import requests
 import xarray as xr
@@ -37,8 +37,9 @@ LEFT_LON = 21.3
 RIGHT_LON = 22.01
 KROSNO_LAT = 49.69
 KROSNO_LON = 21.77
+KROSNO_ELEVATION_M = 280.0
 RETRY_INTERVAL_SECONDS = 600
-MAX_TOTAL_WAIT_MINUTES = 90
+MAX_TOTAL_WAIT_MINUTES = 120
 
 # ==================== LOGIKA CZASU ====================
 now = datetime.utcnow()
@@ -73,6 +74,7 @@ STATIC_MIDDLE = (
     "&lev_entire_atmosphere=on" 
     "&var_TMP=on&var_HGT=on&var_UGRD=on&var_VGRD=on&var_CAPE=on&var_CIN=on"
     "&var_LFTX=on&var_PWAT=on&var_HLCY=on&var_DPT=on&var_RH=on&var_SPFH=on&var_VVEL=on&var_APCP=on&var_PRATE=on"
+    "&var_PRES=on"
     "&subregion=on"
     f"&toplat={TOP_LAT}&bottomlat={BOTTOM_LAT}&leftlon={LEFT_LON}&rightlon={RIGHT_LON}"
 )
@@ -97,6 +99,37 @@ def safe_get_point(ds, possible_names):
     return np.nan
 
 # ==================== ALGORYTMY ====================
+def calc_rh(t_c, td_c):
+    if np.isnan(t_c) or np.isnan(td_c): return np.nan
+    e = 6.112 * np.exp((17.67 * td_c) / (td_c + 243.5))
+    es = 6.112 * np.exp((17.67 * t_c) / (t_c + 243.5))
+    return min(max((e / es) * 100.0, 0.0), 100.0)
+
+def calc_tatry_visibility(t2m, td2m, rh700, pwat, wdir10m, wspd10m, prate):
+    if not np.isnan(prate) and prate > 0.1: return "Brak (Opad)"
+    rh2m = calc_rh(t2m, td2m)
+    if np.isnan(rh2m) or np.isnan(pwat): return ""
+    
+    score = 100.0 - (rh2m - 30.0) * 1.5 - (pwat * 2.5)
+    
+    if not np.isnan(wdir10m) and not np.isnan(wspd10m):
+        if 135 <= wdir10m <= 225 and wspd10m > 5.0:
+            score += 30 # Silny Halny oczyszcza dolną troposferę
+        elif 290 <= wdir10m <= 360:
+            score += 15 # Masa polarna-morska / arktyczna z północnego zachodu
+            
+    if not np.isnan(rh700) and rh700 > 75: 
+        score -= 40 # Chmury piętra średniego zasłaniające góry
+        
+    score = np.clip(score, 0, 100)
+    
+    if score < 20: desc = "Brak"
+    elif score < 45: desc = "Słaba (~50km)"
+    elif score < 75: desc = "Dobra (~100km)"
+    else: desc = "Wybitna (Tatry!)"
+    
+    return f"{int(score)}% ({desc})"
+
 def estimate_storm_motion(u10, v10, u500, v500):
     if any(np.isnan(x) for x in [u10, v10, u500, v500]): return np.nan, np.nan
     u_mean, v_mean = (u10 + u500) / 2.0, (v10 + v500) / 2.0
@@ -117,7 +150,7 @@ def wind_direction(u, v):
 
 def is_foehn_wind(wdir):
     if np.isnan(wdir): return False
-    return 157.5 <= wdir <= 247.5
+    return 145.0 <= wdir <= 235.0
 
 def calc_brn(cape, dls_06):
     if np.isnan(cape) or np.isnan(dls_06) or dls_06 < 1 or cape <= 0: return np.nan
@@ -164,17 +197,15 @@ def calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh1, pwat, lcl, lr, brn,
     if not np.isnan(dls06) and dls06 > 15: score += 10
     if not np.isnan(srh3) and srh3 > 100: score += 8
     if not np.isnan(pwat) and pwat > 25: score += 6
-    if foehn: score *= 0.65
     val = float(np.clip(np.round(score, 0), 0, 100))
     return val if val > 0 else np.nan
 
-def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1, foehn=False):
+def calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh1):
     if np.isnan(cape) or cape < 200: return np.nan
     score = 0.0
     if cape > 800: score += 20
-    if not np.isnan(dls06) and dls06 > 15: score += 15
-    if not np.isnan(srh3) and srh3 > 100: score += 20
-    if foehn: score *= 0.55
+    if not np.isnan(dls06) and dls06 > 15: score += 25
+    if not np.isnan(srh3) and srh3 > 100: score += 25
     val = float(np.clip(np.round(score, 0), 0, 100))
     return val if val > 0 else np.nan
 
@@ -199,12 +230,29 @@ def calc_full_stp(sbcape, lcl_h, srh01, dls06, sbcin):
     val = round(max(0, min((min(sbcape/1500,1.5) * max(0,(2000-lcl_h)/1000) * min(srh01/150,1.5) * min(dls06/20,1.5) * max(0,(200+sbcin)/150)), 8.0)), 2)
     return val if val > 0 else np.nan
 
+def calc_tornado_prob(stp, lcl, srh01, dls01):
+    if any(np.isnan(x) for x in [stp, lcl, srh01, dls01]): return np.nan
+    if stp <= 0.1: return np.nan
+    score = stp * 15.0
+    if lcl < 800: score += 20
+    elif lcl > 1200: score -= 20
+    if srh01 > 100: score += 15
+    if dls01 > 10: score += 15
+    val = float(np.clip(round(score, 0), 0, 100))
+    return val if val > 0 else np.nan
+
 def calc_wind_risk(dcape, rh700, dls06, cape):
     base_dcape = dcape if (not np.isnan(dcape)) else (cape * 0.35 if not np.isnan(cape) else 0.0)
     if base_dcape < 300: return np.nan
     score = min(base_dcape / 1100.0, 1.0) * 45
     if not np.isnan(rh700) and rh700 < 55: score += 20
-    if not np.isnan(dls06) and dls06 > 18: score += 20
+    if not np.isnan(dls06) and dls06 > 15: score += 20
+    val = float(np.clip(np.round(score, 0), 0, 100))
+    return val if val > 0 else np.nan
+
+def calc_derecho_prob(dcp, dls06):
+    if np.isnan(dcp) or dcp < 0.2: return np.nan
+    score = (dcp / 1.5) * 50.0 + (dls06 / 25.0) * 50.0
     val = float(np.clip(np.round(score, 0), 0, 100))
     return val if val > 0 else np.nan
 
@@ -212,32 +260,37 @@ def calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, f
     if np.isnan(pwat) or pwat < 20: return np.nan
     score = min(pwat/40,1)*35 + (min(rh850/90,1)*20 if not np.isnan(rh850) else 0)
     if not np.isnan(storm_speed):
-        if storm_speed < 5.0: score += 20     
+        if storm_speed < 5.0: score += 20      
         elif storm_speed > 18.0: score -= 15    
     score *= orographic
     if foehn: score *= 0.6
     val = float(np.clip(round(score,0),0,100))
     return val if val > 0 else np.nan
 
-def get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado):
+def get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado, prob_derecho):
     p_u = prob_ulewa if not np.isnan(prob_ulewa) else 0.0
     p_g = prob_grad if not np.isnan(prob_grad) else 0.0
     p_w = prob_db if not np.isnan(prob_db) else 0.0
     p_t = prob_tornado if not np.isnan(prob_tornado) else 0.0
-    max_prob = max(p_u, p_g, p_w, p_t)
+    p_d = prob_derecho if not np.isnan(prob_derecho) else 0.0
+    
+    max_prob = max(p_u, p_g, p_w, p_t, p_d)
     if max_prob < 15: return ""
-    elif max_prob < 40: return "1/MRGL"
-    elif max_prob < 70: return "2/SLGT"
-    elif max_prob < 90: return "3/ENH"
+    elif max_prob < 30: return "1/MRGL"
+    elif max_prob < 50: return "2/SLGT"
+    elif max_prob < 75: return "3/ENH"
     else: return "4/MDT"
 
 def classify_storm_mode(cape, dls06, srh3, cin, lcl, prob):
-    if np.isnan(prob) or prob < 15 or np.isnan(cape) or cape < 100: return ""
+    if np.isnan(prob) or prob < 10 or np.isnan(cape) or cape < 100: return "Brak"
     if cin < -150 and cape > 800: return "Elevated"
-    if dls06 < 10: return "Pulse / Zwykła"
-    if dls06 > 25 and srh3 > 150 and cape > 800: return "Supercell (prawdopodobna)"
-    if dls06 > 20 and srh3 < 80: return "QLCS / Squall Line"
-    if 12 < dls06 < 22 and cape > 600: return "Multicell"
+    if dls06 < 10: return "Pulse Storm / Pojedyncza"
+    if dls06 > 25 and srh3 > 200 and cape > 800: return "Supercell (Wysokie Ryzyko)"
+    if dls06 > 20 and srh3 > 150 and cape > 500: return "Supercell"
+    if dls06 > 15 and srh3 > 100 and cape > 300: return "Marginal Supercell"
+    if dls06 > 20 and srh3 < 100: return "QLCS / Bow Echo"
+    if dls06 > 15 and srh3 < 100: return "Squall Line"
+    if 10 <= dls06 <= 20 and cape > 500: return "Multicell Cluster"
     return "Zwykła / Multicell"
 
 def calc_orographic_factor(wdir, wspd):
@@ -255,7 +308,7 @@ def lcl_height_m(t2m_c, td2m_c):
 if ASYNC_AVAILABLE:
     async def fetch_single_async(session, fh, sem):
         grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         url = build_url(grib_filename)
         
         async with sem:
@@ -270,7 +323,6 @@ if ASYNC_AVAILABLE:
                                 print(f"  ✅ [SUKCES] f{fh:03d} (Próba {attempt})", flush=True)
                                 return True
                         elif r.status == 403:
-                            print(f"  ⚠️ [BLOKADA 403] f{fh:03d} -> Czekam 10s... (Próba {attempt})", flush=True)
                             await asyncio.sleep(10 + attempt * 2)
                         else:
                             await asyncio.sleep(3)
@@ -286,7 +338,8 @@ if ASYNC_AVAILABLE:
             await asyncio.gather(*tasks)
 
 def download_missing_gribs(forecast_hours, global_attempt):
-    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+    # Bugfix: NOAA filter dla pojedynczych stacji potrafi ważyć od 4 KB. Próg obniżony do 2048 bajtów.
+    pending = [fh for fh in forecast_hours if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 2048]
     
     if not pending: 
         print("[DOWNLOAD] Wszystkie pliki obecne w lokalnym cache.", flush=True)
@@ -301,7 +354,7 @@ def download_missing_gribs(forecast_hours, global_attempt):
         from concurrent.futures import ThreadPoolExecutor
         def fetch_single(fh):
             grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fh:03d}"
-            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+            local_path = os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
             url = build_url(grib_filename)
             for attempt in range(1, 6):
                 sleep(1.5)
@@ -334,8 +387,8 @@ def process_local_gribs(forecast_hours):
     prev_fh = 0
     
     for fh in forecast_hours:
-        path = os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        if not os.path.exists(path) or os.path.getsize(path) < 5000: 
+        path = os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
+        if not os.path.exists(path) or os.path.getsize(path) < 2048: 
             prev_fh = fh
             continue
             
@@ -369,7 +422,10 @@ def process_local_gribs(forecast_hours):
             cin = safe_get_point(ds_sfc, ['cin', 'CIN'])
             li = safe_get_point(ds_sfc, ['lftx', 'LFTX'])
             pwat = safe_get_point(ds_pwat, ['pwat', 'PWAT'])
+            p_sfc = safe_get_point(ds_sfc, ['sp', 'PRES']) 
             
+            if np.isnan(p_sfc): p_sfc = 98000.0 # Zastępcze 980 hPa dla 280 m n.p.m.
+
             t850 = safe_get_point(ds_850, ['t', 'TMP']) - 273.15
             t700 = safe_get_point(ds_700, ['t', 'TMP']) - 273.15
             t500 = safe_get_point(ds_500, ['t', 'TMP']) - 273.15
@@ -413,8 +469,9 @@ def process_local_gribs(forecast_hours):
 
             wdir = wind_direction(u10, v10)
             wdir850 = wind_direction(u850, v850)
+            wspd10m = np.hypot(u10, v10) if not np.isnan(u10) else np.nan
             foehn = is_foehn_wind(wdir850)
-            orog_factor = calc_orographic_factor(wdir, np.hypot(u10, v10) if not np.isnan(u10) else np.nan)
+            orog_factor = calc_orographic_factor(wdir, wspd10m)
 
             dls06 = np.hypot(u500 - u10, v500 - v10) if not any(np.isnan([u500, u10])) else np.nan
             dls01 = np.hypot(u925 - u10, v925 - v10) if not any(np.isnan([u925, u10])) else np.nan
@@ -442,35 +499,48 @@ def process_local_gribs(forecast_hours):
             ehi = calc_ehi(cape, srh3)
             stp_full = calc_full_stp(cape, lcl, srh_01, dls06, cin)
             
+            # === POPRAWKA METPY === Zastrzyk danych z powierzchni Krosna (280m n.p.m.)
             if METPY_AVAILABLE and ds_isobaric is not None:
                 try:
                     ds_point = ds_isobaric.sel(latitude=KROSNO_LAT, longitude=KROSNO_LON, method="nearest")
                     level_name = 'level' if 'level' in ds_point.coords else 'isobaricInhPa'
                     levels = ds_point[level_name].values.astype(float)
-                    idx = np.argsort(-levels)
-                    levels_sorted = levels[idx]
-                    p = levels_sorted * units.hPa
-                    t = (ds_point['t'] if 't' in ds_point.data_vars else ds_point['TMP']).sel({level_name: levels_sorted}).values * units.K
-                    td = (ds_point['dpt'] if 'dpt' in ds_point.data_vars else ds_point['DPT']).sel({level_name: levels_sorted}).values * units.K
-                    u = (ds_point['u'] if 'u' in ds_point.data_vars else ds_point['UGRD']).sel({level_name: levels_sorted}).values * units('m/s')
-                    v = (ds_point['v'] if 'v' in ds_point.data_vars else ds_point['VGRD']).sel({level_name: levels_sorted}).values * units('m/s')
-                    hgt = (ds_point['gh'] if 'gh' in ds_point.data_vars else ds_point['HGT']).sel({level_name: levels_sorted}).values * units.meter
+                    
+                    # Filtrujemy tylko poziomy ciśnienia znajdujące się NAD Krosnem
+                    p_sfc_hpa = p_sfc / 100.0
+                    idx = levels < p_sfc_hpa
+                    
+                    p_prof = np.insert(levels[idx], 0, p_sfc_hpa) * units.hPa
+                    t_vals = (ds_point['t'] if 't' in ds_point.data_vars else ds_point['TMP']).sel({level_name: levels[idx]}).values
+                    t_prof = np.insert(t_vals, 0, t2m + 273.15) * units.K
+                    
+                    td_vals = (ds_point['dpt'] if 'dpt' in ds_point.data_vars else ds_point['DPT']).sel({level_name: levels[idx]}).values
+                    td_prof = np.insert(td_vals, 0, td2m + 273.15) * units.K
+                    
+                    u_vals = (ds_point['u'] if 'u' in ds_point.data_vars else ds_point['UGRD']).sel({level_name: levels[idx]}).values
+                    u_prof = np.insert(u_vals, 0, u10) * units('m/s')
+                    
+                    v_vals = (ds_point['v'] if 'v' in ds_point.data_vars else ds_point['VGRD']).sel({level_name: levels[idx]}).values
+                    v_prof = np.insert(v_vals, 0, v10) * units('m/s')
+                    
+                    hgt_vals = (ds_point['gh'] if 'gh' in ds_point.data_vars else ds_point['HGT']).sel({level_name: levels[idx]}).values
+                    hgt_prof = np.insert(hgt_vals, 0, KROSNO_ELEVATION_M) * units.meter
 
-                    sbcape, sbcin = mpcalc.surface_based_cape_cin(p, t, td)
-                    mucape_val, _ = mpcalc.most_unstable_cape_cin(p, t, td)
+                    sbcape, sbcin = mpcalc.surface_based_cape_cin(p_prof, t_prof, td_prof)
+                    mucape_val, _ = mpcalc.most_unstable_cape_cin(p_prof, t_prof, td_prof)
                     mucape = float(mucape_val.magnitude)
                     
-                    lcl_p, _ = mpcalc.lcl(p[0], t[0], td[0])
+                    lcl_p, _ = mpcalc.lcl(p_prof[0], t_prof[0], td_prof[0])
                     lcl_h = float(mpcalc.pressure_to_height_std(lcl_p).to('m').magnitude)
                     
-                    u_storm2, v_storm2, _ = mpcalc.bunkers_storm_motion(p, u, v, hgt)
-                    srh01_val = mpcalc.storm_relative_helicity(hgt, u, v, depth=1*units.km, storm_u=u_storm2, storm_v=v_storm2)[0]
-                    srh03_val = mpcalc.storm_relative_helicity(hgt, u, v, depth=3*units.km, storm_u=u_storm2, storm_v=v_storm2)[0]
+                    u_storm2, v_storm2, _ = mpcalc.bunkers_storm_motion(p_prof, u_prof, v_prof, hgt_prof)
+                    srh01_val = mpcalc.storm_relative_helicity(hgt_prof, u_prof, v_prof, depth=1*units.km, storm_u=u_storm2, storm_v=v_storm2)[0]
+                    srh03_val = mpcalc.storm_relative_helicity(hgt_prof, u_prof, v_prof, depth=3*units.km, storm_u=u_storm2, storm_v=v_storm2)[0]
                     
-                    dcape_val = mpcalc.downdraft_cape(p, t, td)
+                    dcape_val = mpcalc.downdraft_cape(p_prof, t_prof, td_prof)
                     dcape = float(dcape_val.magnitude)
                     
-                    mu_mr_metpy = float(mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(p[0], td[0])).magnitude * 1000)
+                    mu_mr_metpy = float(mpcalc.mixing_ratio_from_specific_humidity(mpcalc.specific_humidity_from_dewpoint(p_prof[0], td_prof[0])).magnitude * 1000)
                     
                     srh3 = float(srh03_val.magnitude) if not np.isnan(float(srh03_val.magnitude)) else srh3
                     ship = calc_ship(mucape, mu_mr_metpy, lr_700_500, t500, dls06)
@@ -480,54 +550,51 @@ def process_local_gribs(forecast_hours):
 
             stp_old = calc_stp(cape, srh_01, dls06, lcl)
             prob_old = calc_storm_prob(cape, cin, li, dls06, dls01, srh3, srh_01, pwat, lcl, lr_700_500, brn, foehn)
-            prob_sc = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01, foehn)
+            prob_sc = calc_supercell_risk(cape, dls06, srh3, brn, li, dls01, srh_01)
             prob_ulewa = calc_heavy_rain_potential(pwat, rh850, rh700, vvel850, dls06, storm_speed, foehn, orog_factor)
             prob_db = calc_wind_risk(dcape, rh700, dls06, cape) 
             
             base_stp = stp_full if not np.isnan(stp_full) else 0.0
-            prob_tornado = min(max(0, base_stp * 25 + (srh3 / 300 * 30 if not np.isnan(srh3) else 0)), 100)
-            if not np.isnan(dls06) and dls06 < 12.0:
-                if not np.isnan(cape) and cape > 150 and not np.isnan(lcl) and lcl < 900:
-                    nst_score = min(30.0, (cape / 800.0) * 15 + ((1000 - lcl) / 1000) * 15)
-                    prob_tornado = max(prob_tornado, nst_score)
-            if prob_tornado <= 0: prob_tornado = np.nan
-
+            prob_tornado = calc_tornado_prob(base_stp, lcl, srh_01, dls01)
+            
             base_cape = cape if not np.isnan(cape) else 0.0
             base_ship = ship if not np.isnan(ship) else 0.0
             prob_grad = min(max(0, base_ship * 30 + (base_cape / 1500 * 25)), 100)
             if prob_grad <= 0: prob_grad = np.nan
 
+            dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
+            prob_derecho = calc_derecho_prob(dcp, dls06)
+            
+            # Wiatr Halny już sztucznie nie ucina tornad i derecho, bo operują one często na innych warstwach
             if foehn:
                 if not np.isnan(prob_old): prob_old *= 0.65
-                if not np.isnan(prob_tornado): prob_tornado *= 0.5
-                if not np.isnan(prob_grad): prob_grad *= 0.6
-                if not np.isnan(prob_db): prob_db *= 0.7
-                if not np.isnan(prob_sc): prob_sc *= 0.55
 
-            if np.isnan(prob_old) or prob_old <= 25:
+            if np.isnan(prob_old) or prob_old <= 20:
                 prob_sc = np.nan
                 prob_tornado = np.nan
                 prob_grad = np.nan
-                prob_db = np.nan
                 prob_ulewa = np.nan
 
-            if rain_hour < 2.0:
-                prob_ulewa = np.nan
+            if rain_hour < 2.0: prob_ulewa = np.nan
 
             rot_type = ""
             if not np.isnan(prob_sc) and prob_sc > 20:
                 rot_type = supercell_rotation_type(srh3)
                 
             hail = estimate_hail_size(cape, lr_700_500, dls06)
-            dcp = calc_dcp(mucape, dcape, dls06, u10, v10, u850, v850, u700, v700, u500, v500)
             lightning = calc_lightning_rate(cape, lcl, cin)
             
             prob_temp = min(base_cape / 1200 * 40 + (srh3 / 200 * 20 if not np.isnan(srh3) else 0), 100)
             storm_mode = classify_storm_mode(cape, dls06, srh3, cin, lcl, prob_temp)
 
-            estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado)
+            estofex_category = get_estofex_category(prob_ulewa, prob_grad, prob_db, prob_tornado, prob_derecho)
             orog_display = f"+{int(round((orog_factor - 1.0) * 100))}%" if orog_factor >= 1.05 else ""
             dcp_display = fmt(dcp, 2, True) if (not np.isnan(dcp) and dcp >= 0.2) else ""
+            
+            storm_speed_kmh = np.round(storm_speed * 3.6, 1) if not np.isnan(storm_speed) else np.nan
+            storm_speed_display = fmt(storm_speed_kmh, 1, False) if (not np.isnan(prob_old) and prob_old >= 10) else ""
+
+            tatry_vis = calc_tatry_visibility(t2m, td2m, rh700, pwat, wdir, wspd10m, rain_hour)
 
             rows.append({
                 "Czas": valid_time,
@@ -554,16 +621,19 @@ def process_local_gribs(forecast_hours):
                 "Prob SC [%]": fmt(prob_sc, 0, True),
                 "Prob Tornado [%]": fmt(prob_tornado, 0, True),
                 "Prob Grad [%]": fmt(prob_grad, 0, True),
-                "Prob DB [%]": fmt(prob_db, 0, True),
+                "Prob DB (Wiatr) [%]": fmt(prob_db, 0, True),
+                "Prob Derecho [%]": fmt(prob_derecho, 0, True),
                 "Prob Ulewa [%]": fmt(prob_ulewa, 0, True),
                 "Storm Mode": storm_mode,
                 "Rotacja": rot_type,
+                "Prędkość Burzy [km/h]": storm_speed_display,
                 "Grad [cm]": fmt(hail, 1, True) if not np.isnan(prob_grad) else "", 
                 "DCP (Derecho)": dcp_display,
                 "Błyski [1/min]": fmt(lightning, 1, True) if not np.isnan(prob_old) and prob_old > 25 else "",
                 "Halny": "TAK" if foehn else "",
                 "Orografia": orog_display,
-                "Poziom (ESTOFEX)": estofex_category
+                "Poziom (ESTOFEX)": estofex_category,
+                "Widzialność Tatr": tatry_vis
             })
             prev_fh = fh
             print("OK", flush=True)
@@ -587,21 +657,24 @@ def save_outputs(df):
     
     xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_conv_{RUN_DATE}_{RUN_HOUR}z.xlsx")
     with pd.ExcelWriter(xlsx_path, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Burze_v2', na_rep='')
-        ws = writer.sheets['Burze_v2']
+        df.to_excel(writer, index=False, sheet_name='Burze_v3', na_rep='')
+        ws = writer.sheets['Burze_v3']
         red = writer.book.add_format({'bg_color': '#FF3333', 'font_color': 'white'})
         
-        def find_col_range(col_name):
-            if col_name in df.columns:
-                col_idx = df.columns.get_loc(col_name)
-                letter = chr(65 + col_idx) if col_idx < 26 else chr(65 + col_idx // 26 - 1) + chr(65 + col_idx % 26)
-                return f"{letter}2:{letter}300"
-            return None
-
-        for col_name, thresh in [("CAPE [J/kg]", 1000), ("SHIP", 1.2), ("STP (stary)", 1.0), ("DCP (Derecho)", 1.0), 
-                                 ("Prob Burzy [%]", 70), ("Prob SC [%]", 50), ("Prob DB [%]", 50)]:
-            r_col = find_col_range(col_name)
-            if r_col: ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
+        # Lepsza metoda alokowania kolumn w XlsxWriter bez limitów
+        for col_idx, col_name in enumerate(df.columns):
+            if col_name in ["CAPE [J/kg]", "SHIP", "STP (stary)", "DCP (Derecho)", "Prob Burzy [%]", "Prob SC [%]", "Prob DB (Wiatr) [%]", "Prob Derecho [%]"]:
+                
+                thresh = 50
+                if col_name == "CAPE [J/kg]": thresh = 1000
+                elif col_name in ["SHIP", "STP (stary)", "DCP (Derecho)"]: thresh = 1.0
+                elif col_name == "Prob Burzy [%]": thresh = 70
+                elif col_name == "Prob Derecho [%]": thresh = 30
+                
+                from xlsxwriter.utility import xl_col_to_name
+                letter = xl_col_to_name(col_idx)
+                r_col = f"{letter}2:{letter}400"
+                ws.conditional_format(r_col, {'type': 'cell', 'criteria': '>=', 'value': thresh, 'format': red})
             
     return [csv_path, xlsx_path]
 
@@ -646,7 +719,7 @@ def upload_to_ftp(files):
 
 if __name__ == "__main__":
     print(f"\n==========================================")
-    print(f"🚀 START: GFS CONVECTION v16 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
+    print(f"🚀 START: GFS CONVECTION v17 ULTIMATE {RUN_DATE}{RUN_HOUR}Z")
     print(f"==========================================\n", flush=True)
     
     start_time = datetime.utcnow()
@@ -655,7 +728,7 @@ if __name__ == "__main__":
     while True:
         elapsed = (datetime.utcnow() - start_time).total_seconds() / 60
         if elapsed > MAX_TOTAL_WAIT_MINUTES:
-            print(f"\n[TIMEOUT] Zakończono wymuszonym limitem 90 minut.", flush=True)
+            print(f"\n[TIMEOUT] Zakończono wymuszonym limitem {MAX_TOTAL_WAIT_MINUTES} minut.", flush=True)
             break
             
         download_missing_gribs(FORECAST_HOURS, global_attempt)
@@ -665,10 +738,11 @@ if __name__ == "__main__":
             files = save_outputs(df)
             upload_to_ftp(files)
             
-        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v16_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 5000]
+        # Zaktualizowany sprawdzian braku plików - uwzględnia poprawiony próg 2048 bajtów
+        missing = [fh for fh in FORECAST_HOURS if not os.path.exists(os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) or os.path.getsize(os.path.join(OUTPUT_DIR, f"krosno_conv_v17_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")) < 2048]
         
         if not missing:
-            print("\n🎉 [SUKCES] Wszystkie prognozy przetworzone i wysłane!", flush=True)
+            print("\n🎉 [SUKCES] Wszystkie prognozy zostały pomyślnie przetworzone i wysłane (T+384)! Skrypt kończy pracę.", flush=True)
             break
             
         print(f"\n⏳ Niekompletne dane. Czekam 10 minut na kolejne pliki NOAA...", flush=True)
