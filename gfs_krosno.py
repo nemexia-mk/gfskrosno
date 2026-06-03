@@ -35,12 +35,12 @@ now = datetime.utcnow()
 current_time = now.time()
 print(f"Aktualny czas UTC: {now.strftime('%Y-%m-%d %H:%M:%S')}")
 
-if time(3, 30) <= current_time < time(9, 30):
+if time(3, 30) <= current_time < time(9, 35):
     # === RUN 00Z ===
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
     print(f"Wybrano run 00Z z dnia {RUN_DATE}")
-elif time(9, 30) <= current_time < time(15, 30):
+elif time(9, 35) <= current_time < time(15, 30):
     # === RUN 06Z ===
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
