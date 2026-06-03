@@ -13,7 +13,7 @@ from time import sleep
 from dotenv import load_dotenv
 from ftplib import FTP, error_perm
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed   # <<< NOWY IMPORT DO RÓWNOLEGŁEGO POBIERANIA
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # -----------------------
 # CONFIG
@@ -111,7 +111,7 @@ STATIC_MIDDLE = (
 )
 
 # -----------------------
-# HELPERS (same jak wcześniej)
+# HELPERS
 # -----------------------
 def build_url(file_name):
     url = f"{BASE_URL}?file={file_name}&dir=/{CYCLE_DIR}{STATIC_MIDDLE}"
@@ -222,7 +222,7 @@ def storm_risk_category(cape, li):
         cat = "Wysokie"
     else:
         cat = "Ekstremalne"
-   
+    
     if not np.isnan(li):
         if li <= -4:
             if cat == "Niskie": cat = "Średnie"
@@ -243,14 +243,14 @@ PREC_TYPE_TO_COLOR = {
 }
 
 # -----------------------
-# NEW: Function to handle 404 error and exit script
+# ZARZĄDZANIE BŁĘDEM 404
 # -----------------------
 def handle_404_and_exit():
     print("❌ Błąd 404 dla pierwszej godziny (f000) - przerywam cały skrypt i odpuszczam zadanie.")
     sys.exit(0)
 
 # -----------------------
-# NEW: Function to check and fetch previous cycle if missing on FTP
+# POBIERANIE POPRZEDNIEGO CYKLU
 # -----------------------
 def check_and_fetch_previous_cycle(current_run_date, current_run_hour):
     current_dt = datetime.strptime(current_run_date + current_run_hour, "%Y%m%d%H")
@@ -258,7 +258,7 @@ def check_and_fetch_previous_cycle(current_run_date, current_run_hour):
     previous_date = previous_dt.strftime("%Y%m%d")
     previous_hour = previous_dt.strftime("%H")
     previous_arch_name = f"gfs_tab_{previous_date[:4]}_{previous_date[4:6]}_{previous_date[6:8]}_{previous_hour}.csv"
-   
+    
     load_dotenv()
     host = os.getenv("FTP_HOST")
     user = os.getenv("FTP_USER")
@@ -266,7 +266,7 @@ def check_and_fetch_previous_cycle(current_run_date, current_run_hour):
     if not all([host, user, passwd]):
         print("⚠️ Brak danych FTP – nie mogę sprawdzić poprzedniego cyklu.")
         return
-   
+    
     try:
         ftp = FTP(host, user, passwd, timeout=30)
         arch_dir = "/stacja.meteo-krosno.pl/archiv"
@@ -277,7 +277,7 @@ def check_and_fetch_previous_cycle(current_run_date, current_run_hour):
             ftp.quit()
             fetch_previous_cycle(previous_date, previous_hour)
             return
-       
+        
         file_list = ftp.nlst()
         if previous_arch_name not in file_list:
             print(f"⚠️ Poprzedni cykl ({previous_arch_name}) nie znaleziony na FTP – pobieram go.")
@@ -294,35 +294,36 @@ def fetch_previous_cycle(prev_date, prev_hour):
     orig_date = RUN_DATE
     orig_hour = RUN_HOUR
     orig_cycle_dir = CYCLE_DIR
-   
+    
     RUN_DATE = prev_date
     RUN_HOUR = prev_hour
     CYCLE_DIR = f"gfs.{RUN_DATE}/{RUN_HOUR}/atmos"
-   
+    
     print(f"\n=== Pobieranie poprzedniego cyklu: {RUN_DATE}{RUN_HOUR}Z ===")
-   
-    downloaded, missing = download_missing_gribs(FORECAST_HOURS)   # stara funkcja (dla poprzedniego cyklu)
+    
+    downloaded, missing = download_missing_gribs(FORECAST_HOURS)   
     if 0 in missing:
         print("⚠️ Poprzedni cykl również niedostępny – pomijam.")
     else:
         df, daily = process_local_gribs(FORECAST_HOURS)
         files = save_outputs(df, daily)
         upload_to_ftp(files)
-   
+    
     RUN_DATE = orig_date
     RUN_HOUR = orig_hour
     CYCLE_DIR = orig_cycle_dir
 
 # -----------------------
-# STARA FUNKCJA (pozostawiona bez zmian – używana w fetch_previous_cycle)
+# STARA FUNKCJA
 # -----------------------
 def download_missing_gribs(forecast_hours, max_retries=2, retry_interval=600):
-    """Stara wersja – nie jest używana w trybie przyrostowym"""
+    """Stara wersja – używana w fetch_previous_cycle"""
     pending = set(forecast_hours)
     downloaded_files = set()
     for fh in list(pending):
         local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+        # Zmieniono próg na 2048
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 2048:
             downloaded_files.add(local_path)
             pending.remove(fh)
     attempt = 0
@@ -333,7 +334,7 @@ def download_missing_gribs(forecast_hours, max_retries=2, retry_interval=600):
             fstr = f"{fh:03d}"
             grib_filename = f"gfs.t{RUN_HOUR}z.pgrb2.0p25.f{fstr}"
             local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fstr}.grib2")
-            if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+            if os.path.exists(local_path) and os.path.getsize(local_path) > 2048:
                 downloaded_files.add(local_path)
                 pending.remove(fh)
                 continue
@@ -366,7 +367,7 @@ def download_missing_gribs(forecast_hours, max_retries=2, retry_interval=600):
     return downloaded_files, sorted(list(pending))
 
 # -----------------------
-# NOWA FUNKCJA – RÓWNOLEGŁE + PRZYROSTOWE POBIERANIE
+# RÓWNOLEGŁE + PRZYROSTOWE POBIERANIE (Z POPRAWIONYM PROGIEM)
 # -----------------------
 def download_missing_gribs_parallel(forecast_hours):
     """Równoległe pobieranie tylko brakujących plików (używana w trybie przyrostowym)"""
@@ -375,7 +376,8 @@ def download_missing_gribs_parallel(forecast_hours):
 
     for fh in forecast_hours:
         local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        if os.path.exists(local_path) and os.path.getsize(local_path) > 50000:   # 50 KB minimum
+        # Poprawka: Obniżono wymóg pliku z 50KB (50000) na 2KB (2048), by przefiltrowane małe pliki nie były usuwane
+        if os.path.exists(local_path) and os.path.getsize(local_path) > 2048:   
             downloaded.append(local_path)
             continue
         pending.append(fh)
@@ -418,13 +420,14 @@ def download_missing_gribs_parallel(forecast_hours):
     still_missing = []
     for fh in forecast_hours:
         local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
-        if not (os.path.exists(local_path) and os.path.getsize(local_path) > 50000):
+        # Poprawka powtórzona również tutaj przy sprawdzaniu braków (próg 2048)
+        if not (os.path.exists(local_path) and os.path.getsize(local_path) > 2048):
             still_missing.append(fh)
 
     return downloaded, still_missing
 
 # -----------------------
-# CORE: przetwarzanie lokalnych plików GRIB -> df (działa nawet gdy nie ma wszystkich godzin)
+# CORE: przetwarzanie lokalnych plików GRIB -> df
 # -----------------------
 def process_local_gribs(forecast_hours):
     rows = []
@@ -432,7 +435,7 @@ def process_local_gribs(forecast_hours):
         local_path = os.path.join(OUTPUT_DIR, f"krosno_{RUN_DATE}_{RUN_HOUR}z_f{fh:03d}.grib2")
         if not os.path.exists(local_path):
             continue
-       
+        
         ds_surface_instant = try_open_by_filter(local_path, {"typeOfLevel": "surface", "stepType": "instant"})
         ds_surface_accum = try_open_by_filter(local_path, {"typeOfLevel": "surface", "stepType": "accum"})
         ds_2m = try_open_by_filter(local_path, {"typeOfLevel": "heightAboveGround", "level": 2})
@@ -442,7 +445,7 @@ def process_local_gribs(forecast_hours):
         ds_mid = try_open_by_filter(local_path, {"typeOfLevel": "middleCloudLayer"})
         ds_high = try_open_by_filter(local_path, {"typeOfLevel": "highCloudLayer"})
         ds_t850 = try_open_by_filter(local_path, {"typeOfLevel": "isobaricInhPa", "level": 850})
-       
+        
         def get_val(datasets, key):
             if not isinstance(datasets, list):
                 datasets = [datasets]
@@ -457,17 +460,17 @@ def process_local_gribs(forecast_hours):
             d2m = convert_and_round(get_val(ds_2m, "d2m"), "d2m")
             t850_val = convert_and_round(get_val(ds_t850, "t850"), "t850")
             sp = convert_and_round(get_val([ds_msl, ds_surface_instant], "msl"), "msl")
-           
+            
             tcc = convert_and_round(get_val([ds_high, ds_mid, ds_low, ds_t850], "tcc"), "tcc")
             lcc = convert_and_round(get_val(ds_low, "lcc"), "lcc")
             mcc = convert_and_round(get_val(ds_mid, "mcc"), "mcc")
             hcc = convert_and_round(get_val(ds_high, "hcc"), "hcc")
             prate_mm3h = convert_and_round(get_val([ds_surface_accum, ds_surface_instant], "prate"), "prate")
             snow_cm = convert_and_round(get_val([ds_surface_instant, ds_surface_accum], "weasd"), "weasd")
-           
+            
             cape = convert_and_round(get_val(ds_surface_instant, "cape"), "cape")
             lftx = convert_and_round(get_val(ds_surface_instant, "lftx"), "lftx")
-           
+            
             u10_val = get_val(ds_10m, "u10")
             v10_val = get_val(ds_10m, "v10")
             wind_ms = np.nan
@@ -475,13 +478,13 @@ def process_local_gribs(forecast_hours):
             if not np.isnan(u10_val) and not np.isnan(v10_val):
                 wind_ms = convert_and_round(np.sqrt(u10_val**2 + v10_val**2), "wind_ms")
                 wind_dir = convert_and_round((np.degrees(np.arctan2(-u10_val, -v10_val)) + 360) % 360, "wind_dir")
-           
+            
             gust = convert_and_round(get_val([ds_surface_instant, ds_10m], "gust"), "gust")
             vis_km = convert_and_round(get_val([ds_surface_instant], "vis"), "vis")
-           
+            
             run_dt = datetime.strptime(RUN_DATE + RUN_HOUR, "%Y%m%d%H")
             valid_time = run_dt + timedelta(hours=fh)
-           
+            
             rows.append({
                 "Czas": valid_time,
                 "T+ (h)": fh,
@@ -524,19 +527,19 @@ def process_local_gribs(forecast_hours):
         })
         daily_stats.columns = ["Tmax","Tmin","Suma_opadu","Wsp_sred","Pres_sred","CAPE_max","LIFTED_min","VIS_min"]
         daily = daily_stats.reset_index()
-       
+        
         daily_temp_mean = df.groupby("Date")["T2M [°C]"].mean().reset_index(name="T_mean")
         daily_dew_mean = df.groupby("Date")["D2M [°C]"].mean().reset_index(name="Td_mean")
-       
+        
         daily = daily.merge(daily_temp_mean, on="Date", how="left").merge(daily_dew_mean, on="Date", how="left")
         daily["LCL_m"] = daily.apply(lambda r: lcl_height_m(r["T_mean"], r["Td_mean"]), axis=1)
-       
+        
         df["PrecType_step"] = df.apply(lambda r: detect_precip_type(r.get("RRR [mm/3h]", np.nan), r.get("T2M [°C]", np.nan), r.get("T850 [°C]", np.nan)), axis=1)
         prec_mode = df.groupby("Date")["PrecType_step"].agg(lambda x: x.mode().iat[0] if not x.mode().empty else "Brak").reset_index(name="PrecType")
-       
+        
         daily = daily.merge(prec_mode, on="Date", how="left")
         daily["StormRisk"] = daily.apply(lambda r: storm_risk_category(r["CAPE_max"], r["LIFTED_min"]), axis=1)
-       
+        
         daily["Date_str"] = daily["Date"].astype(str)
     else:
         daily = pd.DataFrame()
@@ -555,11 +558,11 @@ def save_outputs(df, daily):
         daily.to_excel(writer, sheet_name="dzienna_prognoza", index=False)
         workbook = writer.book
         worksheet = writer.sheets["prognoza"]
-       
+        
         border_fmt = workbook.add_format({'border': 1})
         if not df.empty:
             worksheet.conditional_format(f'A1:{chr(65 + len(df.columns) - 1)}{len(df) + 1}', {'type': 'no_blanks', 'format': border_fmt})
-       
+        
         if "PrecType" in df.columns:
             col_idx = df.columns.get_loc("PrecType")
             rng = f"{chr(65+col_idx)}2:{chr(65+col_idx)}{len(df)+1}"
@@ -567,52 +570,52 @@ def save_outputs(df, daily):
             fmt_snow = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Śnieg", "#ADD8E6"), 'border': 1})
             fmt_mix = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Deszcz ze śniegiem", "#00FFBB"), 'border': 1})
             fmt_freeze = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Deszcz marznący", "#FFA500"), 'border': 1})
-           
+            
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Deszcz"', 'format': fmt_rain})
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Śnieg"', 'format': fmt_snow})
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Deszcz ze śniegiem"', 'format': fmt_mix})
             worksheet.conditional_format(rng, {'type': 'cell', 'criteria': 'equal to', 'value': '"Deszcz marznący"', 'format': fmt_freeze})
-           
+            
         for i, col in enumerate(df.columns):
             max_len = max(df[col].astype(str).map(len).max() if len(df)>0 else 0, len(col)) + 2
             worksheet.set_column(i, i, max_len)
-           
+            
     print("\n✅ Excel zapisany:", xlsx_path)
-   
+    
     csv_path = os.path.join(OUTPUT_DIR, f"krosno_gfs_{RUN_DATE}_{RUN_HOUR}z.csv")
     df.to_csv(csv_path, index=False, encoding='utf-8')
     print("✅ CSV zapisany:", csv_path)
-   
+    
     df_plot = df[df["T+ (h)"] <= 120].copy() if not df.empty else pd.DataFrame()
     out_png = os.path.join(OUTPUT_DIR, f"meteorogram_krosno_120h.png")
-   
+    
     if not df_plot.empty:
         fig, axes = plt.subplots(7, 1, figsize=(13, 15), sharex=True)
         fig.subplots_adjust(hspace=0.3)
         time_axis = df_plot["Czas"]
-       
+        
         axes[0].plot(time_axis, df_plot["T2M [°C]"], color="#D62728", label="Temperatura")
         axes[0].plot(time_axis, df_plot["D2M [°C]"], color="#1F77B4", linestyle="--", label="Punkt rosy")
         axes[0].set_ylabel("°C")
         axes[0].legend(loc="upper left", fontsize=8)
         axes[0].grid(True, ls=":")
-       
+        
         axes[1].bar(time_axis, df_plot["RRR [mm/3h]"].fillna(0), width=0.08, color="#1F77B4", label="Opad [mm/3h]")
         axes[1].plot(time_axis, df_plot["RRR [mm/3h]"].fillna(0).cumsum(), color="#000080", linewidth=1, label="Suma opadów")
         axes[1].set_ylabel("mm/3h")
         axes[1].legend(loc="upper left", fontsize=8)
         axes[1].grid(True, ls=":")
-       
+        
         axes[2].plot(time_axis, df_plot["MSLP [hPa]"], color="#000000")
         axes[2].set_ylabel("hPa")
         axes[2].grid(True, ls=":")
-       
+        
         axes[3].plot(time_axis, df_plot["WSPD [m/s]"], color="#FF7F0E", label="Wiatr")
         axes[3].plot(time_axis, df_plot["GUST [m/s]"], color="#D62728", linestyle="--", label="Porywy")
         axes[3].set_ylabel("m/s")
         axes[3].legend(loc="upper left", fontsize=8)
         axes[3].grid(True, ls=":")
-       
+        
         low = df_plot["CL [%]"].fillna(0)
         mid = df_plot["CM [%]"].fillna(0)
         high = df_plot["CH [%]"].fillna(0)
@@ -623,13 +626,13 @@ def save_outputs(df, daily):
         axes[4].set_ylim(0, 100)
         axes[4].legend(loc="upper left", fontsize=8)
         axes[4].grid(True, ls=":")
-       
+        
         axes[5].plot(time_axis, df_plot["CAPE [J/kg]"].fillna(0), color="#8A2BE2", label="CAPE")
         axes[5].plot(time_axis, df_plot["LIFTED [°C]"], color="#2ca02c", linestyle="--", label="Lifted")
         axes[5].set_ylabel("CAPE / LI")
         axes[5].legend(loc="upper left", fontsize=8)
         axes[5].grid(True, ls=":")
-       
+        
         axes[6].bar(time_axis, df_plot["SNOW [cm]"].fillna(0), width=0.08, color="#87CEFA", label="Śnieg [cm]")
         ax7b = axes[6].twinx()
         ax7b.plot(time_axis, df_plot["VIS [km]"].fillna(np.nan), color="#8B4513", linewidth=1, label="Widzialność [km]")
@@ -638,10 +641,10 @@ def save_outputs(df, daily):
         axes[6].legend(loc="upper left", fontsize=8)
         ax7b.legend(loc="upper right", fontsize=8)
         axes[6].grid(True, ls=":")
-       
+        
         date_fmt = DateFormatter("%d.%m\n%H UTC")
         axes[-1].xaxis.set_major_formatter(date_fmt)
-       
+        
         plt.suptitle(f"GFS Krosno – Meteorogram 120h ({RUN_DATE}{RUN_HOUR}Z)", fontsize=14, weight="bold")
         plt.savefig(out_png, dpi=220, bbox_inches="tight")
         plt.close(fig)
@@ -664,35 +667,35 @@ def upload_to_ftp(files_to_send):
     try:
         ftp = FTP(host, user, passwd, timeout=30)
         ftp.cwd("/stacja.meteo-krosno.pl/")
-       
+        
         for path in files_to_send:
             if not os.path.exists(path):
                 continue
-           
+            
             if path.endswith('.csv'):
                 with open(path, "rb") as f:
                     ftp.storbinary(f"STOR gfs-tab.csv", f)
                     print(f"📤 Wysłano na FTP (nadpisano): gfs-tab.csv")
-               
+                
                 arch_dir = "/stacja.meteo-krosno.pl/archiv"
                 try:
                     ftp.cwd(arch_dir)
                 except error_perm:
                     ftp.mkd(arch_dir)
                     ftp.cwd(arch_dir)
-               
+                
                 arch_name = f"gfs_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
                 with open(path, "rb") as f:
                     ftp.storbinary(f"STOR {arch_name}", f)
                     print(f"📤 Wysłano na FTP (archiwum): {arch_name}")
-               
+                
                 ftp.cwd("/stacja.meteo-krosno.pl/")
             else:
                 fname = os.path.basename(path)
                 with open(path, "rb") as f:
                     ftp.storbinary(f"STOR {fname}", f)
                     print(f"📤 Wysłano na FTP: {fname}")
-       
+        
         ftp.quit()
         print("✅ Wszystkie pliki wysłane na FTP.")
     except error_perm as e:
@@ -705,36 +708,36 @@ def upload_to_ftp(files_to_send):
 # -----------------------
 if __name__ == "__main__":
     print(f"\n=== Start GFS Krosno {RUN_DATE}{RUN_HOUR}Z (TRYB PRZYROSTOWY – co 10 minut) ===")
-   
+    
     # Najpierw sprawdź i ewentualnie pobierz poprzedni cykl
     check_and_fetch_previous_cycle(RUN_DATE, RUN_HOUR)
-   
+    
     start_time = datetime.utcnow()
-   
+    
     while True:
         elapsed_minutes = (datetime.utcnow() - start_time).total_seconds() / 60
-       
+        
         if elapsed_minutes > MAX_TOTAL_WAIT_MINUTES:
             print(f"⏰ Przekroczono maksymalny czas oczekiwania ({MAX_TOTAL_WAIT_MINUTES} min). Kończę.")
             break
-       
+        
         print(f"\n🔄 === PRÓBA POBIERANIA ===  (minuta {elapsed_minutes:.0f}/{MAX_TOTAL_WAIT_MINUTES})")
-       
+        
         # równoległe pobieranie tylko brakujących plików
         downloaded, missing = download_missing_gribs_parallel(FORECAST_HOURS)
-       
+        
         print(f"   Pobrano łącznie: {len(downloaded)} plików | Brakuje jeszcze: {len(missing)} godzin")
-       
+        
         # przetwarzamy to co jest i od razu wysyłamy na FTP
         df, daily = process_local_gribs(FORECAST_HOURS)
         files = save_outputs(df, daily)
         upload_to_ftp(files)
-       
+        
         if not missing:
             print("\n✅ Wszystkie pliki pobrane – pełna prognoza gotowa!")
             break
-       
+        
         print(f"   ⏳ Czekam {RETRY_INTERVAL_SECONDS//60} minut na kolejne pliki NOMADS...\n")
         sleep(RETRY_INTERVAL_SECONDS)
-   
+    
     print("\n🏁 Skrypt zakończony.\n")
