@@ -43,12 +43,12 @@ if current_time >= time(20, 0) or current_time < time(3, 0):
     else:
         RUN_DATE = (now - timedelta(days=1)).strftime("%Y%m%d")
     print(f"Wybrano run 18Z z dnia {RUN_DATE}")
-elif time(3, 0) <= current_time < time(8, 30):
+elif time(3, 0) <= current_time < time(9, 30):
     # === RUN 00Z ===
     RUN_HOUR = "00"
     RUN_DATE = now.strftime("%Y%m%d")
     print(f"Wybrano run 00Z z dnia {RUN_DATE}")
-elif time(8, 30) <= current_time < time(14, 30):
+elif time(9, 30) <= current_time < time(14, 30):
     # === RUN 06Z ===
     RUN_HOUR = "06"
     RUN_DATE = now.strftime("%Y%m%d")
