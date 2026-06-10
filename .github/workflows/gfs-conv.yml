@@ -2,7 +2,7 @@ name: GFS Krosno – auto run
 
 on:
   schedule:
-    - cron: "05 0,5,10,16 * * *"
+    - cron: "35 4,10,16,22 * * *"
   workflow_dispatch:        # umożliwia ręczne uruchomienie z GitHuba
 
 jobs:
