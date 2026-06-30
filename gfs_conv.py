@@ -38,7 +38,7 @@ RIGHT_LON = 22.01
 KROSNO_LAT = 49.69
 KROSNO_LON = 21.77
 KROSNO_ELEVATION_M = 280.0
-RETRY_INTERVAL_SECONDS = 600
+RETRY_INTERVAL_SECONDS = 120
 MAX_TOTAL_WAIT_MINUTES = 120
 
 # ==================== LOGIKA CZASU ====================
@@ -745,6 +745,6 @@ if __name__ == "__main__":
             print("\n🎉 [SUKCES] Wszystkie prognozy zostały pomyślnie przetworzone i wysłane (T+384)! Skrypt kończy pracę.", flush=True)
             break
             
-        print(f"\n⏳ Niekompletne dane. Czekam 10 minut na kolejne pliki NOAA...", flush=True)
+        print(f"\n⏳ Niekompletne dane. Czekam 2 minuty na kolejne pliki NOAA...", flush=True)
         sleep(RETRY_INTERVAL_SECONDS)
         global_attempt += 1
