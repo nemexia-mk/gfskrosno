@@ -69,7 +69,7 @@ FORECAST_HOURS = list(range(0, 121, 1)) + list(range(123, 385, 3))
 # -----------------------
 # KONFIGURACJA – TRYB PRZYROSTOWY
 # -----------------------
-RETRY_INTERVAL_SECONDS = 10 * 60      # co 10 minut nowa próba
+RETRY_INTERVAL_SECONDS = 2 * 60      # co 2 minuty nowa próba
 MAX_TOTAL_WAIT_MINUTES = 90           # maksymalnie 90 minut od pierwszego uruchomienia
 
 # Static NOMADS filter
@@ -740,7 +740,7 @@ if __name__ == "__main__":
             print("\n✅ Wszystkie pliki pobrane – pełna prognoza gotowa!")
             break
         
-        print(f"   ⏳ Czekam {RETRY_INTERVAL_SECONDS//60} minut na kolejne pliki NOMADS...\n")
+        print(f"   ⏳ Czekam {RETRY_INTERVAL_SECONDS//60} minuty na kolejne pliki NOMADS...\n")
         sleep(RETRY_INTERVAL_SECONDS)
     
     print("\n🏁 Skrypt zakończony.\n")
