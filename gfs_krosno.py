@@ -661,44 +661,72 @@ def upload_to_ftp(files_to_send):
         return
 
     load_dotenv()
-    host = os.getenv("FTP_HOST")
+    host = os.get_env("FTP_HOST") if hasattr(os, "get_env") else os.getenv("FTP_HOST")
     user = os.getenv("FTP_USER")
     passwd = os.getenv("FTP_PASS")
     if not all([host, user, passwd]):
         print("⚠️ Brak danych FTP (ENV lub .env) – pomijam wysyłkę.")
         return
+
     try:
         ftp = FTP(host, user, passwd, timeout=30)
-        ftp.cwd("/stacja.meteo-krosno.pl/")
-        
+        base_dir = "/stacja.meteo-krosno.pl"
+        arch_dir = "/stacja.meteo-krosno.pl/archiv"
+
+        ftp.cwd(base_dir)
+
         for path in files_to_send:
             if not os.path.exists(path):
                 continue
-            
-            if path.endswith('.csv'):
+
+            # 1. SPRAWDZENIE DLA PLIKU 3H (musi być pierwsze!)
+            if path.endswith('_3h.csv'):
+                # Wysyłka głównego gfs-tab-3h.csv
+                ftp.cwd(base_dir)
                 with open(path, "rb") as f:
-                    ftp.storbinary(f"STOR gfs-tab.csv", f)
-                    print(f"📤 Wysłano na FTP (nadpisano): gfs-tab.csv")
-                
-                arch_dir = "/stacja.meteo-krosno.pl/archiv"
+                    ftp.storbinary("STOR gfs-tab-3h.csv", f)
+                    print("📤 Wysłano na FTP (nadpisano): gfs-tab-3h.csv")
+
+                # Wysyłka do archiwum
                 try:
                     ftp.cwd(arch_dir)
                 except error_perm:
                     ftp.mkd(arch_dir)
                     ftp.cwd(arch_dir)
-                
-                arch_name = f"gfs_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
+
+                arch_name_3h = f"gfs_tab_3h_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
                 with open(path, "rb") as f:
-                    ftp.storbinary(f"STOR {arch_name}", f)
-                    print(f"📤 Wysłano na FTP (archiwum): {arch_name}")
-                
-                ftp.cwd("/stacja.meteo-krosno.pl/")
+                    ftp.storbinary(f"STOR {arch_name_3h}", f)
+                    print(f"📤 Wysłano na FTP (archiwum 3h): {arch_name_3h}")
+
+            # 2. SPRAWDZENIE DLA STANDARDOWEGO PLIKU CSV (1h)
+            elif path.endswith('.csv'):
+                # Wysyłka głównego gfs-tab.csv
+                ftp.cwd(base_dir)
+                with open(path, "rb") as f:
+                    ftp.storbinary("STOR gfs-tab.csv", f)
+                    print("📤 Wysłano na FTP (nadpisano): gfs-tab.csv")
+
+                # Wysyłka do archiwum
+                try:
+                    ftp.cwd(arch_dir)
+                except error_perm:
+                    ftp.mkd(arch_dir)
+                    ftp.cwd(arch_dir)
+
+                arch_name_1h = f"gfs_tab_{RUN_DATE[:4]}_{RUN_DATE[4:6]}_{RUN_DATE[6:8]}_{RUN_HOUR}.csv"
+                with open(path, "rb") as f:
+                    ftp.storbinary(f"STOR {arch_name_1h}", f)
+                    print(f"📤 Wysłano na FTP (archiwum 1h): {arch_name_1h}")
+
+            # 3. POZOSTAŁE PLIKI (np. XLSX, PNG)
             else:
+                ftp.cwd(base_dir)
                 fname = os.path.basename(path)
                 with open(path, "rb") as f:
                     ftp.storbinary(f"STOR {fname}", f)
                     print(f"📤 Wysłano na FTP: {fname}")
-        
+
         ftp.quit()
         print("✅ Wszystkie pliki wysłane na FTP.")
     except error_perm as e:
