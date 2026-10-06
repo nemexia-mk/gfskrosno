@@ -311,9 +311,16 @@ def process_local_gribs(forecast_hours, run_date, run_hour, cache=None):
                      'LIFTED [°C]':value('lftx'),'VIS [km]':value('vis')})
     if not rows: return pd.DataFrame(),pd.DataFrame()
     df = pd.DataFrame(rows).sort_values('Czas').reset_index(drop=True)
-    # Do CSV zachowujemy dokładniejsze RRR, by nie tracić słabych opadów.
-    for column in df.select_dtypes(include='number').columns:
-        if column != 'T+ (h)': df[column] = df[column].round(4 if column == 'RRR [mm]' else 2)
+    # Dotychczasowa dokładność parametrów. Opad zaokrąglamy dopiero
+    # po obliczeniu sum dobowych, nie podczas odejmowania akumulacji APCP.
+    decimal_places = {
+        'T2M [°C]':1, 'D2M [°C]':1, 'T850 [°C]':1, 'MSLP [hPa]':1,
+        'CL [%]':1, 'CM [%]':1, 'CH [%]':1, 'CC [%]':1,
+        'SNOW [cm]':1, 'WSPD [m/s]':1, 'GUST [m/s]':1, 'VIS [km]':1,
+        'WDIR [°]':2, 'CAPE [J/kg]':2, 'LIFTED [°C]':2,
+    }
+    for column, digits in decimal_places.items():
+        df[column] = df[column].round(digits)
     df['Date'] = df['Czas'].dt.date
     grouped = df.groupby('Date')
     daily = grouped.agg(Tmax=('T2M [°C]','max'),Tmin=('T2M [°C]','min'),
@@ -349,6 +356,9 @@ def process_local_gribs(forecast_hours, run_date, run_hour, cache=None):
     LOG.info('Opad: %s; dane: %s/%s terminów. Czas CSV: UTC.',sources,len(df),len(hours))
     for field in ('T2M [°C]','RRR [mm]','CC [%]','SNOW [cm]'):
         if df[field].isna().any(): LOG.warning('%s: brakuje %s wartości',field,int(df[field].isna().sum()))
+    # Kolumna RRR oraz prezentowana suma dobowa: 1 miejsce, jak wcześniej.
+    df['RRR [mm]'] = df['RRR [mm]'].round(1)
+    daily['Suma_opadu'] = daily['Suma_opadu'].round(1)
     return df,daily
 
 
