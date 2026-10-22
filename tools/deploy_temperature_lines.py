@@ -13,6 +13,9 @@ def save(ftp,path,data):
 data=Path('site/app.js').read_bytes()
 with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=40) as ftp:
     old=read(ftp,ASSET)
+    if old==data:
+        print('TEMPERATURE_LINES_ALREADY_VERIFIED',hashlib.sha256(data).hexdigest())
+        raise SystemExit(0)
     assert hashlib.sha256(old).hexdigest()=='60275457051569358994b0889967aa5f1cd8b54f258d5bb2aa3903001049d5a4','Live asset changed; stop to avoid overwriting'
     backup=BACKUP+'/app-before-temperature-lines-'+stamp+'.js'
     save(ftp,backup,old)
