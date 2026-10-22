@@ -106,6 +106,28 @@ class MetmodTests(unittest.TestCase):
     def test_duplicates_collapsed(self):
         result = m.merge_csv(archive()+archive(), {DAY:{16:'6,2'}})
         self.assertEqual(len(list(csv.reader(io.StringIO(result.decode()),delimiter=';'))),1)
+    def test_missing_rain_and_sunshine_saved_as_zero(self):
+        page = html().replace('<td>0.0</td>', '<td>-</td>').replace('<td>6.2</td>', '<td></td>')
+        values = m.parse_day(page, DAY)
+        raw = archive().decode('cp1250')
+        rows = list(csv.reader(io.StringIO(raw), delimiter=';'))
+        rows[0][9] = ''
+        buffer = io.StringIO()
+        csv.writer(buffer, delimiter=';').writerows(rows)
+        result = m.merge_csv(buffer.getvalue().encode('cp1250'), {DAY: values})
+        row = next(csv.reader(io.StringIO(result.decode('cp1250')), delimiter=';'))
+        self.assertEqual(row[9], '0'); self.assertEqual(row[16], '0')
+        self.assertEqual(row[12], '')
+        self.assertEqual(result, m.merge_csv(result, {DAY: values}))
+    def test_missing_rain_and_sunshine_preserve_known_measurements(self):
+        known = m.merge_csv(archive(), {DAY: {9: '12,4', 16: '6,2'}})
+        result = m.merge_csv(known, {DAY: {9: '', 16: ''}})
+        self.assertEqual(result, known)
+    def test_missing_rain_and_sunshine_zero_for_new_day(self):
+        other = date(2026, 10, 21)
+        result = m.merge_csv(archive(), {other: {9: '', 16: ''}})
+        rows = list(csv.reader(io.StringIO(result.decode('cp1250')), delimiter=';'))
+        self.assertEqual(rows[1][9], '0'); self.assertEqual(rows[1][16], '0')
     def test_empty_or_truncated_csv_rejected(self):
         for raw in (b'', b'349210670;KROSNO;2026;10;20\n'):
             with self.assertRaises(ValueError): m.merge_csv(raw,{DAY:{9:'0'}})
