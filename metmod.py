@@ -8,6 +8,7 @@ import io
 import logging
 import os
 import re
+import time
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from uuid import uuid4
@@ -90,11 +91,46 @@ def session():
 
 
 def fetch_day(client, target):
-    r = client.get('https://meteomodel.pl/aktualne-dane-pomiarowe/',
-                   params={'data': target.isoformat(), 'rodzaj': 'da', 'wmoid': '12670',
-                           'dni': 1, 'ord': 'asc'}, timeout=(10, 30))
-    r.raise_for_status()
-    return parse_day(r.content, target)
+    updates, failures = fetch_days(client, [target])
+    if failures:
+        raise ValueError(f'Brak poprawnych danych dla {target} po ponowieniach')
+    return updates[target]
+
+
+def fetch_days(client, targets, attempts=3):
+    """Jedna tabela dla całego okresu; ponów także błędne odpowiedzi HTTP 200."""
+    targets = sorted(set(targets))
+    if not targets:
+        return {}, []
+    span = (targets[-1] - targets[0]).days + 1
+    if span > 31 or attempts < 1:
+        raise ValueError('Nieprawidłowy zakres pobierania lub liczba prób')
+    updates, pending = {}, set(targets)
+    for attempt in range(attempts):
+        if attempt:
+            delay = 5 * 2 ** (attempt - 1)
+            LOG.info('Ponowny odczyt za %s s; brakuje %s dni', delay, len(pending))
+            time.sleep(delay)
+        try:
+            response = client.get('https://meteomodel.pl/aktualne-dane-pomiarowe/',
+                                  params={'data': targets[-1].isoformat(), 'rodzaj': 'da',
+                                          'wmoid': '12670', 'dni': span, 'ord': 'asc'},
+                                  timeout=(10, 30))
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            LOG.warning('Odczyt okresu, próba %s/%s: %s', attempt + 1, attempts, exc)
+            continue
+        LOG.info('Odpowiedź źródła: HTTP %s, %s bajtów; próba %s/%s',
+                 response.status_code, len(response.content), attempt + 1, attempts)
+        for day in sorted(pending):
+            try:
+                updates[day] = parse_day(response.content, day)
+                pending.remove(day)
+            except ValueError as exc:
+                LOG.warning('%s: próba %s/%s nieudana (%s)', day, attempt + 1, attempts, exc)
+        if not pending:
+            break
+    return updates, sorted(pending)
 
 
 def row_key(row):
@@ -171,7 +207,8 @@ def publish(updates):
         before = retrieve(ftp, FILE_NAME)  # Błąd RETR nigdy nie oznacza nowego pliku.
         after = merge_csv(before, updates)
         if after == before:
-            LOG.info('Bez zmian; archiwum jest aktualne')
+            LOG.info('CSV bez zmian dla %s poprawnie odczytanych dni (%s – %s)',
+                     len(updates), min(updates), max(updates))
             return
         backup = FILE_NAME + '.' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '.' + token[:8] + '.bak'
         ftp.storbinary('STOR ' + backup, io.BytesIO(before))
@@ -213,17 +250,15 @@ def main():
     target = args.date or today - timedelta(days=1)
     if not 1 <= args.lookback <= 31 or target >= today:
         parser.error('Wymagana zakończona doba i lookback 1–31')
-    updates, failures = {}, []
+    targets = [target - timedelta(days=offset) for offset in range(args.lookback - 1, -1, -1)]
     with session() as client:
-        for offset in range(args.lookback - 1, -1, -1):
-            day = target - timedelta(days=offset)
-            try:
-                updates[day] = fetch_day(client, day)
-                LOG.info('%s: poprawny wiersz; %s/%s parametrów', day,
-                         sum(v != '' for v in updates[day].values()), len(updates[day]))
-            except (requests.RequestException, ValueError) as exc:
-                LOG.warning('%s: pominięto (%s)', day, exc)
-                failures.append(day)
+        updates, failures = fetch_days(client, targets)
+    for day, values in sorted(updates.items()):
+        LOG.info('%s: poprawny wiersz; %s/%s parametrów', day,
+                 sum(v != '' for v in values.values()), len(values))
+    LOG.info('Kompletność dni: %s/%s', len(updates), len(targets))
+    if failures:
+        LOG.error('Niepełny odczyt; brakujące dni: %s', ', '.join(map(str, failures)))
     if not updates:
         LOG.error('Brak poprawnych danych; CSV pozostaje bez zmian')
         return 1
@@ -233,8 +268,9 @@ def main():
         except (OSError, ValueError, *ftplib.all_errors) as exc:
             LOG.error('Publikacja przerwana: %s', exc)
             return 1
-    return 1 if target in failures else 0
+    return 1 if failures else 0
 
 
 if __name__ == '__main__':
     raise SystemExit(main())
+
