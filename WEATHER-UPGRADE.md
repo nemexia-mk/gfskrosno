@@ -31,6 +31,6 @@ python gfs_conv.py --run 2026102212 --reuse-gribs --no-ftp
 
 ## Wdrożenie i odzyskiwanie
 
-Workflow `weather-deploy.yml` najpierw testuje i generuje pełną prognozę bez FTP. Następnie wykonuje i sprawdza bajtowo kopię plików pod `/weather-backups/<czas-UTC>-<identyfikator>/`, poza katalogami WWW. Manifest zawiera ścieżki i SHA256. Dodatkowo zapisuje oryginały obu skryptów z GitHuba. Po kopii zapisuje skrypty, dane i kod strony; końcowa kontrola porównuje bajty i schemat CSV. Oryginały repozytorium są też w `deployment/baseline/`.
+Workflow `weather-deploy.yml` najpierw testuje i generuje pełną prognozę bez FTP. Następnie wykonuje i sprawdza bajtowo kopię plików pod `/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/cache/weather-backups/<czas-UTC>-<identyfikator>/`, z blokadą dostępu HTTP sprawdzaną przed zapisaniem kopii. Manifest zawiera ścieżki i SHA256. Dodatkowo zapisuje oryginały obu skryptów z GitHuba. Po kopii zapisuje skrypty, dane i kod strony; końcowa kontrola porównuje bajty i schemat CSV. Oryginały repozytorium są też w `deployment/baseline/`.
 
 Do wycofania użyj ścieżek z manifestu i odpowiedniej kopii przez FTP; pliki oznaczone `backup: null` nie istniały przed wdrożeniem. Danych dostępowych nie zapisujemy w kodzie. Workflow korzysta z istniejącego sekretu `FTP_PASS`.

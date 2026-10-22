@@ -8,6 +8,7 @@ from pathlib import Path
 from uuid import uuid4
 import ftplib
 import os
+import requests
 
 STATION='/stacja.meteo-krosno.pl'
 ASSETS='/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/assets'
@@ -41,9 +42,17 @@ def main():
     p=argparse.ArgumentParser();p.add_argument('stage',choices=['prepare','site','verify']);args=p.parse_args()
     with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=45) as ftp:
         if args.stage=='prepare':
-            root='/weather-backups'
+            root='/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/cache/weather-backups'
             try: ftp.mkd(root)
             except ftplib.error_perm: ftp.cwd(root)
+            put(ftp,root+'/.htaccess',b'<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n')
+            probe='access-test-'+uuid4().hex+'.txt'
+            put(ftp,root+'/'+probe,b'weather-backup-access-test')
+            url='https://meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/cache/weather-backups/'+probe
+            response=requests.get(url,timeout=30)
+            if response.status_code not in (403,404): raise ValueError('Katalog kopii nie ma potwierdzonej blokady HTTP')
+            ftp.delete(root+'/'+probe)
+            print('BACKUP_HTTP_PROTECTED',response.status_code)
             backup=root+'/'+datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid4().hex[:8]
             ftp.mkd(backup)
             paths=[STATION+'/'+n for n in ('gfs_krosno.py','gfs_conv.py','gfs-tab.csv','gfs-conv.csv','gfs-extra.json','gfs-extra.csv')]+[ASSETS+'/app.js',ASSETS+'/gfs-extra.json']
