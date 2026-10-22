@@ -1,0 +1,36 @@
+import ftplib, os, io, hashlib, gzip, json
+from pathlib import Path, PurePosixPath
+from datetime import datetime, timezone
+ASSET='/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/assets/app.js'
+BACKUP='/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/cache/weather-backups/20261022T175849Z-298ac382'
+CACHE='/meteo-krosno.pl/wp-content/cache/page_enhanced/meteo-krosno.pl'
+stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+def read(ftp,path):
+    out=io.BytesIO(); ftp.retrbinary('RETR '+path,out.write); return out.getvalue()
+def save(ftp,path,data):
+    ftp.storbinary('STOR '+path,io.BytesIO(data))
+    assert read(ftp,path)==data,'Byte verification failed: '+path
+data=Path('site/app.js').read_bytes()
+with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=40) as ftp:
+    old=read(ftp,ASSET)
+    assert hashlib.sha256(old).hexdigest()=='03e1a17e7569f42a2c0983f755829fe93e3004ad82b47cc001528073ae458e96','Live asset changed; stop to avoid overwriting'
+    backup=BACKUP+'/app-before-icm-look-'+stamp+'.js'
+    save(ftp,backup,old)
+    temporary=ASSET+'.icm-'+stamp
+    save(ftp,temporary,data)
+    ftp.rename(temporary,ASSET)
+    assert read(ftp,ASSET)==data
+    print('ICM_LOOK_DEPLOYED',hashlib.sha256(data).hexdigest(),'BACKUP',backup)
+    for slug in ('','meteorogram','prognoza'):
+        directory=CACHE+('/'+slug if slug else '')
+        try: names=ftp.nlst(directory)
+        except ftplib.error_perm: continue
+        for path in names:
+            name=PurePosixPath(path).name
+            if not name.startswith('_index') or '.html' not in name: continue
+            source=directory+'/'+name; cached=read(ftp,source)
+            plain=gzip.decompress(cached) if cached.startswith(b'\x1f\x8b') else cached
+            if b'meteo-krosno-modern/assets/app.js' not in plain: continue
+            save(ftp,BACKUP+'/icm-pagecache-'+stamp+'-'+(slug or 'home')+'-'+name,cached)
+            ftp.delete(source)
+            print('PAGE_CACHE_REFRESHED',slug or 'home')
