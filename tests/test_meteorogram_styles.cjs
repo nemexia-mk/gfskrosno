@@ -11,17 +11,29 @@ assert.equal(ctx.mgScaleColor(0,[[0,'#000000'],[10,'#ffffff']]),'#000000');
 assert.equal(ctx.mgScaleColor(10,[[0,'#000000'],[10,'#ffffff']]),'#ffffff');
 assert.equal(ctx.mgScaleColor(5,[[0,'#000000'],[10,'#ffffff']]),'#808080');
 const rows=Array.from({length:24},(_,n)=>({time:start+n*3600000,date:'2026-10-22 '+String(n).padStart(2,'0')+':00:00',
- temp:Math.sin((n-6)/4)*7,dew:-8,groundTemp:n===7?null:Math.sin((n-6)/4)*11,
+ temp:Math.sin((n-6)/4)*7,apparent:Math.sin((n-6)/4)*7-2,dew:-8,groundTemp:n===7?null:Math.sin((n-6)/4)*11,
  wind:3+n,gust:n===9?null:8+n,dir:200,pressure:990+n*2,snow:0,rain:0,type:'Brak',stormLevel:0,
  cloud:100,cloudLow:100,cloudMid:50,cloudHigh:75,ceiling:200+n*80,vis:5+n,fog:10}));
 const svg=ctx.mgSvg(rows,start,start+24*3600000);
 assert.equal((svg.match(/data-gust-tick=/g)||[]).length,23);
 assert.equal((svg.match(/data-ground-temp=/g)||[]).length,23);
-assert.match(svg,/stroke="url\(#mg-temp-sign\)"/);
-assert.match(svg,/fill="url\(#mg-temp-sign\)"/);
+assert.match(svg,/stroke="#d52626" stroke-width="3"/);
+assert.match(svg,/stroke="#2384e8" stroke-width="3"/);
+assert(!svg.includes('mg-temp-sign'));
+const tempPanel=svg.slice(svg.indexOf('>Temperatura</text>'),svg.indexOf('>Opad i wilgotność</text>'));
+assert(!/<path clip-path="url\(#mg-clip-temp\)"[^>]*fill="(?!none)/.test(tempPanel));
+const tempTicks=[...tempPanel.matchAll(/<text x="194"[^>]*>([^<]+)<\/text>/g)].map(m=>m[1]);
+assert(tempTicks.length<=6);
+const gridHours=[...svg.matchAll(/data-grid-hour="(\d+)"/g)].map(m=>+m[1]);
+assert(gridHours.length>0&&gridHours.every(h=>h%3===0));
+for(const values of [[-30,40],[-3,3],[10,10],[],[-.1,.1],[-100,60]]){
+ const scale=ctx.mgTemperatureScale(values);
+ assert(Math.round((scale.hi-scale.lo)/scale.step)+1<=6);
+ values.forEach(v=>assert(v>=scale.lo&&v<=scale.hi));
+}
+
 assert.match(svg,/fill="url\(#mg-fill-pressure\)"/);
 assert.match(svg,/fill="url\(#mg-fill-wind\)"/);
-assert.match(svg,/id="mg-temp-sign"[\s\S]*?stop-color="#d52626"[\s\S]*?stop-color="#2384e8"/);
 const cloud=svg.slice(svg.indexOf('>Chmury piętra i mgła</text>'));
 const ticks=[...cloud.matchAll(/<text x="194"[^>]*>([^<]+)<\/text>/g)].map(m=>m[1]);
 assert.deepEqual(ticks,['0','2','4','6','8']);
@@ -35,4 +47,4 @@ for(const value of [-5,5]){
  assert(!/NaN|undefined/.test(oneSign));
 }
 if(process.argv.includes('--preview'))fs.writeFileSync('/tmp/meteo-style-preview.html','<!doctype html><meta charset="utf-8"><body style="margin:0;background:white">'+svg+'</body>');
-console.log('Styles: cloud ticks 0/2/4/6/8; ground and gust ticks; signed temperature; fixed pressure/wind colors; both wind units verified.');
+console.log('Styles: cloud ticks 0/2/4/6/8; ground and gust ticks; thick air/apparent lines; 3-hour grid and at most 6 temperature ticks; fixed pressure/wind colors; both wind units verified.');
