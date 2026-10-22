@@ -19,6 +19,10 @@ jobs:
         run: pip install 'numpy<3' 'pandas<3' 'matplotlib<4' requests xlsxwriter python-dotenv eccodes metpy
       - name: Unit and GRIB regression tests
         run: python -m unittest discover -s tests -p test_gfs_weather.py -v
+      - name: Frontend data joins and syntax
+        run: |
+          node --check site/app.js
+          node tests/test_weather_frontend.cjs
       - name: Select one consistent run
         run: python -c "import gfs_krosno as g,os; d,h=g.select_run(); open(os.environ['GITHUB_ENV'],'a').write('GFS_RUN='+d+h+'\n')"
       - name: Real NOAA download and legacy plus extra outputs without FTP

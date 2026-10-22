@@ -6,9 +6,9 @@ from pathlib import Path
 from unittest.mock import patch
 import numpy as np
 import pandas as pd
-from eccodes import codes_grib_new_from_samples,codes_set,codes_write,codes_release
 import gfs_krosno as g
 import gfs_conv as c
+from eccodes import codes_grib_new_from_samples,codes_set,codes_write,codes_release
 
 SCHEMA = ['Czas','T+ (h)','T2M [°C]','D2M [°C]','T850 [°C]','MSLP [hPa]',
  'CL [%]','CM [%]','CH [%]','CC [%]','RRR [mm]','Rodzaj opadu','SNOW [cm]',

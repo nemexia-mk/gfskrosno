@@ -28,6 +28,9 @@ import matplotlib.pyplot as plt
 from xlsxwriter.utility import xl_col_to_name
 from matplotlib.dates import DateFormatter
 from dotenv import load_dotenv
+# MetPy/PROJ przed ecCodes: zapobiega konfliktowi bibliotek natywnych przy zamykaniu.
+from metpy import calc as mpcalc
+from metpy.units import units
 from eccodes import codes_grib_new_from_file, codes_get, codes_release, codes_grib_find_nearest
 
 LOG = logging.getLogger('gfs_krosno')
@@ -107,7 +110,7 @@ def build_params(file_name, run_date, run_hour):
                   '0C_isotherm', 'cloud_ceiling', '3000-0_m_above_ground',
                   '6000-0_m_above_ground'):
         params['lev_' + level] = 'on'
-    for variable in ('RH', 'APTMP', 'CIN', 'PWAT', 'ACPCP', 'CPRAT', 'CPOFP',
+    for variable in ('RH', 'CIN', 'PWAT', 'ACPCP', 'CPRAT', 'CPOFP',
                      'REFC', 'DSWRF', 'SUNSD', 'TSOIL', 'WEASD', 'HGT', 'PRES',
                      'HLCY', 'USTM', 'VSTM', 'VVEL', 'SPFH'):
         params['var_' + variable] = 'on'
@@ -305,8 +308,6 @@ def accumulation_for_step(fh, decoded, previous_fh, key):
 
 def convective_diagnostics(fields):
     """Fizyczne profile zamiast sztucznego MUCAPE/DCAPE i procentów zagrożeń."""
-    from metpy import calc as mpcalc
-    from metpy.units import units
     out = {}
     terrain, ps = fields.get('terrain'), fields.get('surface_pressure')
     if not all(finite(fields.get(k)) for k in ('t2m','d2m','u10','v10','terrain','surface_pressure')):
@@ -386,6 +387,9 @@ def extra_rows(df, decoded):
                          'solar':'solar','frozen_pct':'frozenPct','reflectivity':'reflectivity',
                          'soil_temp':'soilTemp','ground_temp':'groundTemp','snow_water':'snowWater',
                          'srh03_model':'srh03Model'}.items(): item[dest] = f.get(src,np.nan)
+        if all(finite(f.get(k)) for k in ('t2m','rh2m','u10','v10')):
+            item['apparent'] = float(mpcalc.apparent_temperature(f['t2m']*units.degC,
+                f['rh2m']*units.percent,np.hypot(f['u10'],f['v10'])*units('m/s'),mask_undefined=False).to('degC').magnitude)
         if item['type']=='Krupy lodowe': item['type']='Ziarna lodowe'
         for flag in ('crain','csnow','cfrzr','cicep'): item[flag]=f.get(flag,np.nan)
         for height in (80,100):
