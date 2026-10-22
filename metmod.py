@@ -1,5 +1,6 @@
 """Meteomodel -> zbiorczy.csv: walidacja, upsert, blokada i atomowa publikacja.
-Braki nigdy nie kasują pomiarów. Nie zamieniamy opadu 24 h sumą 12 h.
+Braki nigdy nie kasują pomiarów. Pusty opad i usłonecznienie uzupełniamy zerem.
+Nie zamieniamy opadu 24 h sumą 12 h.
 """
 import argparse
 import csv
@@ -172,6 +173,9 @@ def merge_csv(raw, updates):
         for column, value in values.items():
             if value != '':
                 row[column] = value
+            elif column in (9, 16) and not row[column].strip():
+                # Zeruj tylko brak opadu/usłonecznienia; zachowaj znany pomiar.
+                row[column] = '0'
         merged[key] = row
     buffer = io.StringIO(newline='')
     writer = csv.writer(buffer, delimiter=';', lineterminator='\r\n')
