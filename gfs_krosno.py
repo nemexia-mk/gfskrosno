@@ -12,6 +12,7 @@ Pakiet eccodes jest również zależnością używanego dotąd cfgrib.
 import os
 import sys
 import logging
+import json
 from pathlib import Path
 from datetime import datetime, timedelta, time, timezone
 from time import sleep, monotonic
@@ -24,6 +25,7 @@ import pandas as pd
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+from xlsxwriter.utility import xl_col_to_name
 from matplotlib.dates import DateFormatter
 from dotenv import load_dotenv
 from eccodes import codes_grib_new_from_file, codes_get, codes_release, codes_grib_find_nearest
@@ -42,6 +44,10 @@ REQUEST_TIMEOUT_SECONDS = 90
 PRECIP_ALLOW_AVERAGED_PRATE = True
 # False oznacza wyłącznie rodzaj opadu wskazany przez GFS; bez flag -> brak danych.
 PRECIP_TYPE_TEMPERATURE_FALLBACK = True
+# Rozszerzenia trafiają wyłącznie do gfs-extra.json/CSV, nigdy do gfs-tab.csv.
+PROFILE_LEVELS = (1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600,
+                  550, 500, 450, 400, 350, 300, 250, 200, 150, 100)
+FTP_SITE_ASSETS_DIR = os.getenv('FTP_SITE_ASSETS_DIR', '')
 # Nadpisywanie gfs-tab.csv przez aktualny run pozostaje celowe.
 FTP_BASE_DIR = '/stacja.meteo-krosno.pl'
 FTP_ARCH_DIR = FTP_BASE_DIR + '/archiv'
@@ -95,6 +101,16 @@ def build_params(file_name, run_date, run_hour):
                      'GUST','UGRD','VGRD','PRMSL','CAPE','LFTX','SNOD',
                      'VIS','CRAIN','CSNOW','CFRZR','CICEP'):
         params['var_' + variable] = 'on'
+    for level in PROFILE_LEVELS:
+        params[f'lev_{level}_mb'] = 'on'
+    for level in ('80_m_above_ground', '100_m_above_ground', '0-0.1_m_below_ground',
+                  '0C_isotherm', 'cloud_ceiling', '3000-0_m_above_ground',
+                  '6000-0_m_above_ground'):
+        params['lev_' + level] = 'on'
+    for variable in ('RH', 'APTMP', 'CIN', 'PWAT', 'ACPCP', 'CPRAT', 'CPOFP',
+                     'REFC', 'DSWRF', 'SUNSD', 'TSOIL', 'WEASD', 'HGT', 'PRES',
+                     'HLCY', 'USTM', 'VSTM', 'VVEL', 'SPFH'):
+        params['var_' + variable] = 'on'
     return params
 
 
@@ -125,16 +141,34 @@ def identify_field(short, level_type, level, category, number):
     if level_type == 'heightAboveGround' and level == 2:
         if short in ('2t','t2m','tmp2m','t','tmp'): return 't2m'
         if short in ('2d','d2m','dpt','dew2m'): return 'd2m'
+        if short in ('r', '2r', 'r2', 'rh'): return 'rh2m'
+        if short in ('aptmp', 'apparentt'): return 'apparent'
+    if level_type == 'heightAboveGround' and level in (80, 100):
+        for field, names in {'u': ('u','ugrd','100u'), 'v': ('v','vgrd','100v'),
+                             't': ('t','tmp')}.items():
+            if short in names: return f'{field}{int(level)}m'
     if level_type == 'heightAboveGround' and level == 10:
         if short in ('10u','u10','u','ugrd'): return 'u10'
         if short in ('10v','v10','v','vgrd'): return 'v10'
         if short == 'gust': return 'gust'
-    if level_type == 'isobaricInhPa' and level == 850 and short in ('t','tmp'): return 't850'
+    if level_type == 'isobaricInhPa':
+        for field, names in {'t': ('t','tmp'), 'rh': ('r','rh'), 'u': ('u','ugrd'),
+                             'v': ('v','vgrd'), 'z': ('gh','hgt'),
+                             'omega': ('w','vvel'), 'q': ('q','spfh')}.items():
+            if short in names: return f'profile_{int(level)}_{field}'
     if level_type == 'meanSea' and short in ('prmsl','msl','mslet'): return 'msl'
     if level_type == 'lowCloudLayer' and short in ('lcc','lcdc','tcc','tcdc'): return 'lcc'
     if level_type == 'middleCloudLayer' and short in ('mcc','mcdc','tcc','tcdc'): return 'mcc'
     if level_type == 'highCloudLayer' and short in ('hcc','hcdc','tcc','tcdc'): return 'hcc'
-    if level_type in ('atmosphere','entireAtmosphere') and short in ('tcc','tcdc'): return 'tcc'
+    if level_type in ('atmosphere','entireAtmosphere','atmosphereSingleLayer'):
+        if short in ('tcc','tcdc'): return 'tcc'
+        if short in ('pwat','tcwv'): return 'pwat'
+        if short in ('refc','refd'): return 'reflectivity'
+    if level_type == 'heightAboveGroundLayer' and short == 'hlcy': return 'srh03_model'
+    if level_type == 'heightAboveGroundLayer' and short in ('ustm','vstm'): return short
+    if level_type == 'depthBelowLandLayer' and float(level or 0) == 0 and short in ('st','stl1','tsoil'): return 'soil_temp'
+    if level_type == 'isothermZero' and short in ('gh','hgt'): return 'freezing_msl'
+    if level_type == 'cloudCeiling' and short in ('gh','hgt'): return 'ceiling_msl'
     if level_type != 'surface': return None
     if category == 1 and number == 8: return 'apcp'
     if category == 1 and number == 7: return 'prate'
@@ -142,6 +176,11 @@ def identify_field(short, level_type, level, category, number):
     aliases = {'tp':'apcp','apcp':'apcp','prate':'prate','sde':'snow_depth',
                'snod':'snow_depth','gust':'gust','cape':'cape','lftx':'lftx',
                'vis':'vis','crain':'crain','csnow':'csnow','cfrzr':'cfrzr','cicep':'cicep'}
+    aliases.update({'cin':'cin', 'sp':'surface_pressure', 'pres':'surface_pressure',
+                    'orog':'terrain', 'gh':'terrain', 'hgt':'terrain',
+                    'acpcp':'acpcp', 'cprat':'cprat', 'cpofp':'frozen_pct',
+                    'dswrf':'solar', 'sunsd':'sunshine', 'sdwe':'snow_water',
+                    'weasd':'snow_water', 't':'ground_temp', 'tmp':'ground_temp'})
     return aliases.get(short)
 
 
@@ -149,7 +188,7 @@ def convert_value(value, field, units):
     if not finite(value) or abs(float(value)) >= 1e19:
         return np.nan
     value = float(value)
-    if field in ('t2m','d2m','t850'):
+    if field in ('t2m','d2m','t850','apparent','soil_temp','ground_temp','t80m','t100m') or (field.startswith('profile_') and field.endswith('_t')):
         return value - 273.15 if units == 'K' else value
     if field == 'msl': return value / 100 if units == 'Pa' else value
     if field == 'vis': return value / 1000 if units == 'm' else value
@@ -157,11 +196,11 @@ def convert_value(value, field, units):
         if units == 'm': return value * 100
         if units == 'cm': return value
         return np.nan
-    if field == 'apcp':
+    if field in ('apcp', 'acpcp'):
         if units == 'm': return value * 1000
         if units in ('kg m**-2','kg m-2','kg/m^2','mm'): return value
         return np.nan
-    if field == 'prate':
+    if field in ('prate', 'cprat'):
         if units in ('kg m**-2 s**-1','kg m-2 s-1','kg/m^2/s','mm s**-1'): return value
         if units == 'mm h**-1': return value / 3600
         return np.nan
@@ -176,7 +215,9 @@ def decode_grib(path, expected_fh, cache=None):
     if not path.is_file() or path.stat().st_size == 0: return None
     cache_key = (str(path), path.stat().st_size, path.stat().st_mtime_ns)
     if cache is not None and cache_key in cache: return cache[cache_key]
-    result = {'fields':{}, 'accumulations':[], 'averaged_rates':[]}
+    result = {'fields':{}, 'accumulations':[], 'averaged_rates':[],
+              'conv_accumulations':[], 'conv_averaged_rates':[], 'sun_accumulations':[],
+              'periods':{}}
     try:
         with path.open('rb') as file:
             while True:
@@ -193,19 +234,24 @@ def decode_grib(path, expected_fh, cache=None):
                     start = step_hours(grib_get(handle,'startStep'), unit)
                     end = step_hours(grib_get(handle,'endStep'), unit)
                     if end is not None and not np.isclose(end, expected_fh): continue
-                    if field == 'apcp' and step_type != 'accum': continue
-                    if field == 'prate' and step_type != 'avg': continue
-                    if field not in ('apcp','prate') and step_type != 'instant': continue
+                    if field in ('apcp','acpcp') and step_type != 'accum': continue
+                    if field in ('prate','cprat') and step_type != 'avg': continue
+                    if field not in ('apcp','prate','acpcp','cprat','solar','sunshine') and step_type != 'instant': continue
                     point = codes_grib_find_nearest(handle,KROSNO_LAT,KROSNO_LON,npoints=1)[0]
                     value = convert_value(point['value'],field,str(grib_get(handle,'units','')))
                     if not finite(value): continue
-                    if field in ('apcp','prate'):
+                    if field in ('apcp','prate','acpcp','cprat') or (field == 'sunshine' and step_type == 'accum'):
                         if start is None or end is None or end < start: continue
                         record = {'start':start,'end':end,'value':value}
-                        target = 'accumulations' if field == 'apcp' else 'averaged_rates'
+                        target = {'apcp':'accumulations','prate':'averaged_rates',
+                                  'acpcp':'conv_accumulations','cprat':'conv_averaged_rates',
+                                  'sunshine':'sun_accumulations'}[field]
                         if record not in result[target]: result[target].append(record)
                     else:
                         result['fields'][field] = value
+                        if field == 'profile_850_t': result['fields']['t850'] = value
+                        if field in ('solar','sunshine'):
+                            result['periods'][field] = {'start':start,'end':end,'stepType':step_type}
                 except Exception as exc:
                     LOG.warning('Nie odczytano pola %s w %s: %s',short,path.name,exc)
                 finally:
@@ -241,6 +287,122 @@ def precipitation_for_step(fh, decoded, previous_fh):
                 difference = amount - before
                 if difference >= -1e-6: return max(0.,difference),source
     return np.nan, 'missing'
+
+
+def accumulation_for_step(fh, decoded, previous_fh, key):
+    """Suma w rzeczywistym przedziale, bez utożsamiania akumulacji z natężeniem."""
+    if fh == 0: return 0.0
+    current, previous = decoded.get(fh, {}), decoded.get(previous_fh, {})
+    for record in sorted(current.get(key, []), key=lambda r:r['end']-r['start']):
+        if not np.isclose(record['end'], fh): continue
+        if np.isclose(record['start'], previous_fh): return max(0.,record['value'])
+        for baseline in previous.get(key, []):
+            if np.isclose(baseline['start'], record['start']) and np.isclose(baseline['end'], previous_fh):
+                amount = record['value']-baseline['value']
+                if amount >= -1e-6: return max(0.,amount)
+    return np.nan
+
+
+def convective_diagnostics(fields):
+    """Fizyczne profile zamiast sztucznego MUCAPE/DCAPE i procentów zagrożeń."""
+    from metpy import calc as mpcalc
+    from metpy.units import units
+    out = {}
+    terrain, ps = fields.get('terrain'), fields.get('surface_pressure')
+    if not all(finite(fields.get(k)) for k in ('t2m','d2m','u10','v10','terrain','surface_pressure')):
+        return out
+    profile = []
+    for pressure in PROFILE_LEVELS:
+        keys = [f'profile_{pressure}_{k}' for k in ('t','rh','u','v','z')]
+        if pressure*100 < ps and all(finite(fields.get(k)) for k in keys):
+            t,rh,u,v,z = [fields[k] for k in keys]
+            if z > terrain and 0 < rh <= 105:
+                td = mpcalc.dewpoint_from_relative_humidity(t*units.degC, min(1.,rh/100)*units.dimensionless).magnitude
+                profile.append((pressure,t,float(td),u,v,z))
+    profile.insert(0,(ps/100,fields['t2m'],min(fields['t2m'],fields['d2m']),fields['u10'],fields['v10'],terrain))
+    if len(profile) < 6: return out
+    p,t,td,u,v,z = np.array(profile).T
+    if np.any(np.diff(p)>=0) or np.any(np.diff(z)<=0): return out
+    pu,tu,tdu = p*units.hPa,t*units.degC,td*units.degC
+    uu,vu,zu = u*units('m/s'),v*units('m/s'),(z-terrain)*units.m
+    for depth,key in ((1000,'shear01'),(3000,'shear03'),(6000,'shear06')):
+        if zu[-1].magnitude >= depth:
+            su,sv = mpcalc.bulk_shear(pu,uu,vu,height=zu,bottom=0*units.m,depth=depth*units.m)
+            out[key] = float(np.hypot(su.magnitude,sv.magnitude))
+    try:
+        out['kIndex'] = float(mpcalc.k_index(pu,tu,tdu).magnitude)
+        out['totalTotals'] = float(mpcalc.total_totals_index(pu,tu,tdu).magnitude)
+        out['wetBulb'] = float(mpcalc.wet_bulb_temperature(pu[0],tu[0],tdu[0]).magnitude)
+    except (ValueError,IndexError):
+        pass
+    # Przy braku chwiejności nie wykonujemy kosztownego wznoszenia parceli.
+    if finite(fields.get('cape')) and fields['cape'] >= 25:
+        try:
+            sbcape,sbcin = mpcalc.surface_based_cape_cin(pu,tu,tdu)
+            mucape,mucin = mpcalc.most_unstable_cape_cin(pu,tu,tdu)
+            out.update(sbCape=float(sbcape.magnitude),sbCin=float(sbcin.magnitude),
+                       muCape=float(mucape.magnitude),muCin=float(mucin.magnitude))
+            dcape = mpcalc.downdraft_cape(pu,tu,tdu)[0]
+            out['dCape'] = float(dcape.magnitude)
+            if zu[-1].magnitude >= 6000:
+                right,_,_ = mpcalc.bunkers_storm_motion(pu,uu,vu,zu)
+                out['stormSpeed'] = float(np.hypot(*right.magnitude)*3.6)
+                for depth,key in ((1000,'srh01'),(3000,'srh03')):
+                    _,_,total = mpcalc.storm_relative_helicity(zu,uu,vu,depth=depth*units.m,
+                                                             storm_u=right[0],storm_v=right[1])
+                    out[key] = float(total.magnitude)
+        except (ValueError,IndexError) as exc:
+            LOG.warning('Niepełna diagnostyka konwekcji: %s',exc)
+    return out
+
+
+def storm_potential(cape, cin, conv_rate, reflectivity, rain_rate):
+    """Autorska kategoria środowiska, NIE prawdopodobieństwo ani liczba wyładowań."""
+    if not (finite(cape) and finite(cin)): return None
+    if cape < 100 or abs(cin) > 200: return 0
+    activity = ((finite(conv_rate) and conv_rate >= .05) or
+                (finite(reflectivity) and reflectivity >= 20) or
+                (finite(rain_rate) and rain_rate >= .2 and abs(cin) <= 50))
+    if not activity: return 1
+    if cape >= 1500 and abs(cin) <= 50: return 4
+    if cape >= 700 and abs(cin) <= 100: return 3
+    return 2
+
+
+def extra_rows(df, decoded):
+    rows = []
+    hours = list(df['T+ (h)'].astype(int))
+    for index, (_, legacy) in enumerate(df.iterrows()):
+        fh = int(legacy['T+ (h)']); previous = hours[index-1] if index else 0
+        data = decoded[fh]; f = data['fields']; duration = fh-previous
+        conv_rain = accumulation_for_step(fh,decoded,previous,'conv_accumulations')
+        sun = accumulation_for_step(fh,decoded,previous,'sun_accumulations')
+        item = {'date':legacy['Czas'].strftime('%Y-%m-%d %H:%M:%S'),'lead':fh,
+                'stepHours':duration,'convRain':conv_rain,'sunshine':sun/3600,
+                'type':legacy['Rodzaj opadu'],
+                'precipSource':'GFS: flagi rodzaju opadu' if any(finite(f.get(k)) and f[k]>=.5 for k in ('crain','csnow','cfrzr','cicep'))
+                               else 'Szacunek z temperatury' if legacy['Rodzaj opadu'] not in ('Brak','Brak danych','Nieokreślony') else 'GFS'}
+        for src,dest in {'rh2m':'humidity','apparent':'apparent','cin':'cin','pwat':'pwat',
+                         'solar':'solar','frozen_pct':'frozenPct','reflectivity':'reflectivity',
+                         'soil_temp':'soilTemp','ground_temp':'groundTemp','snow_water':'snowWater',
+                         'srh03_model':'srh03Model'}.items(): item[dest] = f.get(src,np.nan)
+        if item['type']=='Krupy lodowe': item['type']='Ziarna lodowe'
+        for flag in ('crain','csnow','cfrzr','cicep'): item[flag]=f.get(flag,np.nan)
+        for height in (80,100):
+            u,v = f.get(f'u{height}m'),f.get(f'v{height}m')
+            item[f'wind{height}'] = float(np.hypot(u,v)) if finite(u) and finite(v) else np.nan
+            item[f'dir{height}'] = float((np.degrees(np.arctan2(-u,-v))+360)%360) if finite(u) and finite(v) and np.hypot(u,v)>0 else np.nan
+        for src,dest in (('freezing_msl','freezing'),('ceiling_msl','ceiling')):
+            item[dest] = max(0,f[src]-f['terrain']) if finite(f.get(src)) and finite(f.get('terrain')) else np.nan
+        item.update(convective_diagnostics(f))
+        rate = float(legacy['RRR [mm]'])/duration if duration and finite(legacy['RRR [mm]']) else np.nan
+        cr = conv_rain/duration if duration and finite(conv_rain) else np.nan
+        cape = max([v for v in (f.get('cape'),item.get('muCape')) if finite(v)],default=np.nan)
+        item['stormLevel'] = storm_potential(cape,f.get('cin'),cr,item.get('reflectivity'),rate)
+        item['stormLabel'] = ['Brak sygnału','Możliwe burze','Potencjał słaby','Potencjał umiarkowany','Potencjał duży'][item['stormLevel']] if item['stormLevel'] is not None else 'Brak danych'
+        item['cape'] = f.get('cape',np.nan)
+        rows.append({k:(round(float(v),2) if finite(v) else None) if not isinstance(v,str) else v for k,v in item.items()})
+    return rows
 
 
 def lcl_height_m(t_c, td_c):
@@ -359,6 +521,7 @@ def process_local_gribs(forecast_hours, run_date, run_hour, cache=None):
     # Kolumna RRR oraz prezentowana suma dobowa: 1 miejsce, jak wcześniej.
     df['RRR [mm]'] = df['RRR [mm]'].round(1)
     daily['Suma_opadu'] = daily['Suma_opadu'].round(1)
+    df.attrs['extra_rows'] = extra_rows(df,decoded)
     return df,daily
 
 
@@ -376,11 +539,11 @@ def save_outputs(df, daily, run_date, run_hour):
         worksheet = writer.sheets["prognoza"]
         
         border_fmt = workbook.add_format({'border': 1})
-        worksheet.conditional_format(f'A1:{chr(65 + len(df.columns) - 1)}{len(df) + 1}', {'type': 'no_blanks', 'format': border_fmt})
+        worksheet.conditional_format(f'A1:{xl_col_to_name(len(df.columns) - 1)}{len(df) + 1}', {'type': 'no_blanks', 'format': border_fmt})
         
         if "Rodzaj opadu" in df.columns:
             col_idx = df.columns.get_loc("Rodzaj opadu")
-            rng = f"{chr(65+col_idx)}2:{chr(65+col_idx)}{len(df)+1}"
+            rng = f"{xl_col_to_name(col_idx)}2:{xl_col_to_name(col_idx)}{len(df)+1}"
             fmt_rain = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Deszcz", "#90EE90"), 'border': 1})
             fmt_snow = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Śnieg", "#ADD8E6"), 'border': 1})
             fmt_mix = workbook.add_format({'bg_color': PREC_TYPE_TO_COLOR.get("Deszcz ze śniegiem", "#00FFBB"), 'border': 1})
@@ -400,6 +563,12 @@ def save_outputs(df, daily, run_date, run_hour):
     csv_path = os.path.join(OUTPUT_DIR, f"krosno_gfs_{run_date}_{run_hour}z.csv")
     df.to_csv(csv_path, index=False, encoding='utf-8')
     print("✅ CSV zapisany:", csv_path)
+    extra_path = Path(OUTPUT_DIR)/f'gfs_extra_{run_date}_{run_hour}.json'
+    extra_path.write_text(json.dumps({'schema':1,'run':run_datetime(run_date,run_hour).isoformat()+'Z',
+                                     'method':'Autorski potencjał burzowy GFS; nie jest prognozą liczby wyładowań ani procentem prawdopodobieństwa.',
+                                     'rows':df.attrs.get('extra_rows',[])},ensure_ascii=False,allow_nan=False),encoding='utf-8')
+    extra_csv = extra_path.with_suffix('.csv')
+    pd.DataFrame(df.attrs.get('extra_rows',[])).to_csv(extra_csv,index=False,encoding='utf-8')
     
     df_plot = df[df["T+ (h)"] <= 120].copy() if not df.empty else pd.DataFrame()
     if not df_plot.empty:
@@ -477,7 +646,7 @@ def save_outputs(df, daily, run_date, run_hour):
         print("✅ Meteorogram zapisany:", out_png)
     else:
         print("⚠️ Brak danych do meteorogramu.")
-    return [xlsx_path, csv_path] + ([out_png] if not df_plot.empty else [])
+    return [xlsx_path, csv_path, str(extra_path), str(extra_csv)] + ([out_png] if not df_plot.empty else [])
 
 
 
@@ -566,7 +735,17 @@ def upload_to_ftp(files_to_send,run_date,run_hour,publish_latest=True):
             return False
         for path in files_to_send:
             if not os.path.isfile(path): continue
-            if str(path).endswith('.csv'):
+            if os.path.basename(path).startswith('gfs_extra_'):
+                suffix = Path(path).suffix
+                archive_name = f'gfs_extra_{run_date[:4]}_{run_date[4:6]}_{run_date[6:8]}_{run_hour}{suffix}'
+                ensure_ftp_directory(ftp,FTP_ARCH_DIR)
+                ftp_store(ftp,path,archive_name)
+                if publish_latest:
+                    ftp.cwd(FTP_BASE_DIR); ftp_store(ftp,path,'gfs-extra'+suffix)
+                if suffix == '.json' and FTP_SITE_ASSETS_DIR:
+                    ftp.cwd(FTP_SITE_ASSETS_DIR); ftp_store(ftp,path,archive_name)
+                    if publish_latest: ftp_store(ftp,path,'gfs-extra.json')
+            elif str(path).endswith('.csv'):
                 is_3h = str(path).endswith('_3h.csv')
                 current_name = 'gfs-tab-3h.csv' if is_3h else 'gfs-tab.csv'
                 prefix = 'gfs_tab_3h' if is_3h else 'gfs_tab'
@@ -631,7 +810,14 @@ def main():
     parser.add_argument('--run',help='Konkretny run YYYYMMDDHH, np. 2026100600')
     parser.add_argument('--no-ftp',action='store_true',help='Test lokalny bez wysyłki FTP')
     parser.add_argument('--skip-previous',action='store_true',help='Bez uzupełniania poprzedniego runu')
+    parser.add_argument('--hours',help='Wybrane terminy testowe, np. 0,1,2,3,6,24,120')
+    parser.add_argument('--max-wait',type=float,default=MAX_TOTAL_WAIT_MINUTES,help='Limit oczekiwania w minutach')
     args = parser.parse_args()
+    try:
+        forecast_hours = sorted(set(map(int,args.hours.split(',')))) if args.hours else FORECAST_HOURS
+        if not forecast_hours or any(h not in FORECAST_HOURS for h in forecast_hours) or args.max_wait <= 0: raise ValueError()
+    except ValueError:
+        parser.error('Nieprawidłowe --hours lub --max-wait')
     logging.basicConfig(level=logging.INFO,format='%(asctime)s %(levelname)s %(message)s')
     if args.run:
         try:
@@ -644,7 +830,7 @@ def main():
         date,hour = select_run()
     Path(OUTPUT_DIR).mkdir(parents=True,exist_ok=True)
     LOG.info('Start GFS %s%sZ; zapis czasu UTC',date,hour)
-    deadline = monotonic()+MAX_TOTAL_WAIT_MINUTES*60
+    deadline = monotonic()+args.max_wait*60
     if not args.no_ftp and not args.skip_previous:
         check_and_fetch_previous_cycle(date,hour,deadline)
     cache = {}
@@ -652,18 +838,18 @@ def main():
     had_data = False
     upload_ok = args.no_ftp
     while monotonic() < deadline:
-        _,missing = download_missing_gribs_parallel(FORECAST_HOURS,date,hour,deadline)
+        _,missing = download_missing_gribs_parallel(forecast_hours,date,hour,deadline)
         signature = tuple((fh,local_grib(date,hour,fh).stat().st_size,
                            local_grib(date,hour,fh).stat().st_mtime_ns)
-                          for fh in FORECAST_HOURS if local_grib(date,hour,fh).is_file())
+                          for fh in forecast_hours if local_grib(date,hour,fh).is_file())
         if signature != last_signature or not upload_ok:
-            df,daily = process_local_gribs(FORECAST_HOURS,date,hour,cache)
+            df,daily = process_local_gribs(forecast_hours,date,hour,cache)
             if not df.empty:
                 had_data = True
                 files = save_outputs(df,daily,date,hour)
                 upload_ok = args.no_ftp or upload_to_ftp(files,date,hour,publish_latest=True)
                 last_signature = signature
-                LOG.info('Prognoza częściowa: %s/%s terminów; brak plików: %s',len(df),len(FORECAST_HOURS),len(missing))
+                LOG.info('Prognoza częściowa: %s/%s terminów; brak plików: %s',len(df),len(forecast_hours),len(missing))
                 if not missing:
                     LOG.info('Pobrano wszystkie pliki. Braki parametrów, jeśli są, wymieniono w logu.')
                     break
@@ -678,8 +864,12 @@ def main():
     if not upload_ok:
         LOG.error('Wyniki lokalne gotowe, ale FTP nie zakończyło się powodzeniem')
         return 1
+    if missing:
+        LOG.error('Niepełne pobranie GFS: brak %s terminów',len(missing))
+        return 1
     return 0
 
 
 if __name__ == '__main__':
     sys.exit(main())
+
