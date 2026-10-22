@@ -50,6 +50,10 @@ PRECIP_TYPE_TEMPERATURE_FALLBACK = True
 # Rozszerzenia trafiają wyłącznie do gfs-extra.json/CSV, nigdy do gfs-tab.csv.
 PROFILE_LEVELS = (1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600,
                   550, 500, 450, 400, 350, 300, 250, 200, 150, 100)
+LEGACY_COLUMNS = ['Czas','T+ (h)','T2M [°C]','D2M [°C]','T850 [°C]','MSLP [hPa]',
+    'CL [%]','CM [%]','CH [%]','CC [%]','RRR [mm]','Rodzaj opadu','SNOW [cm]',
+    'WSPD [m/s]','GUST [m/s]','WDIR [°]','CAPE [J/kg]','LIFTED [°C]','VIS [km]',
+    'Date','LCL_m','PrecType_step','PrecType','StormRisk']
 FTP_SITE_ASSETS_DIR = os.getenv('FTP_SITE_ASSETS_DIR', '')
 # Nadpisywanie gfs-tab.csv przez aktualny run pozostaje celowe.
 FTP_BASE_DIR = '/stacja.meteo-krosno.pl'
@@ -182,8 +186,8 @@ def identify_field(short, level_type, level, category, number):
     aliases.update({'cin':'cin', 'sp':'surface_pressure', 'pres':'surface_pressure',
                     'orog':'terrain', 'gh':'terrain', 'hgt':'terrain',
                     'acpcp':'acpcp', 'cprat':'cprat', 'cpofp':'frozen_pct',
-                    'dswrf':'solar', 'sunsd':'sunshine', 'sdwe':'snow_water',
-                    'weasd':'snow_water', 't':'ground_temp', 'tmp':'ground_temp'})
+                    'dswrf':'solar', 'sdswrf':'solar', 'sunsd':'sunshine', 'sdwe':'snow_water',
+                    'weasd':'snow_water', 't':'ground_temp', 'tmp':'ground_temp', 'cpr':'cprat'})
     return aliases.get(short)
 
 
@@ -210,6 +214,7 @@ def convert_value(value, field, units):
     if field in ('tcc','lcc','mcc','hcc'):
         if units in ('1','(0 - 1)','fraction'): value *= 100
         return float(np.clip(value, 0, 100))
+    if field == 'frozen_pct': return float(np.clip(value,0,100))
     return value
 
 
@@ -388,8 +393,8 @@ def extra_rows(df, decoded):
                          'soil_temp':'soilTemp','ground_temp':'groundTemp','snow_water':'snowWater',
                          'srh03_model':'srh03Model'}.items(): item[dest] = f.get(src,np.nan)
         if all(finite(f.get(k)) for k in ('t2m','rh2m','u10','v10')):
-            item['apparent'] = float(mpcalc.apparent_temperature(f['t2m']*units.degC,
-                f['rh2m']*units.percent,np.hypot(f['u10'],f['v10'])*units('m/s'),mask_undefined=False).to('degC').magnitude)
+            item['apparent'] = np.asarray(mpcalc.apparent_temperature(f['t2m']*units.degC,
+                f['rh2m']*units.percent,np.hypot(f['u10'],f['v10'])*units('m/s'),mask_undefined=False).to('degC').magnitude).item()
         if item['type']=='Krupy lodowe': item['type']='Ziarna lodowe'
         for flag in ('crain','csnow','cfrzr','cicep'): item[flag]=f.get(flag,np.nan)
         for height in (80,100):
@@ -534,6 +539,8 @@ def save_outputs(df, daily, run_date, run_hour):
     if df.empty:
         print("⚠️ Brak danych do zapisania (brak pobranych plików).")
         return []
+    if list(df.columns) != LEGACY_COLUMNS:
+        raise ValueError('Zmieniony schemat gfs-tab.csv; publikacja przerwana')
 
     xlsx_path = os.path.join(OUTPUT_DIR, f"krosno_gfs_{run_date}_{run_hour}z.xlsx")
     with pd.ExcelWriter(xlsx_path, engine="xlsxwriter") as writer:
@@ -673,6 +680,8 @@ def download_missing_gribs_parallel(forecast_hours, run_date, run_hour, deadline
         timeout = REQUEST_TIMEOUT_SECONDS if deadline is None else max(1,min(REQUEST_TIMEOUT_SECONDS,deadline-monotonic()))
         try:
             response = requests.get(url,params=params,headers=HEADERS,timeout=timeout)
+            if response.status_code >= 400 and b'invalid parameter:' in response.content:
+                raise ValueError('Nieobsługiwany parametr zapytania NOMADS')
             if response.status_code != 200:
                 return fh,None,f'HTTP {response.status_code}'
             if not response.content.startswith(b'GRIB'):
@@ -681,6 +690,8 @@ def download_missing_gribs_parallel(forecast_hours, run_date, run_hour, deadline
             os.replace(temporary,path)
             LOG.info('Pobrano f%03d: %.1f kB',fh,path.stat().st_size/1024)
             return fh,str(path),None
+        except ValueError:
+            raise
         except Exception as exc:
             return fh,None,str(exc)
         finally:

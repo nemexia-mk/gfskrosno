@@ -73,7 +73,7 @@ def main():
             for name in ('gfs_krosno.py','gfs_conv.py'):
                 assert read(ftp,STATION+'/'+name)==Path(name).read_bytes(),name
             assert read(ftp,ASSETS+'/app.js')==Path('site/app.js').read_bytes()
-            from tests.test_gfs_weather import SCHEMA
+            from gfs_krosno import LEGACY_COLUMNS as SCHEMA
             import csv
             header=next(csv.reader(io.StringIO(read(ftp,STATION+'/gfs-tab.csv').decode('utf-8-sig'))))
             assert header==SCHEMA,'Zmieniony schemat CSV'
