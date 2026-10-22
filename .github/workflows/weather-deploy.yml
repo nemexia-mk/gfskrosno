@@ -1,9 +1,6 @@
 name: Verify and deploy weather upgrade
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/weather-deploy.yml']
 permissions:
   contents: read
 concurrency:
