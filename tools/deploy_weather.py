@@ -9,6 +9,9 @@ from uuid import uuid4
 import ftplib
 import os
 import requests
+import sys
+
+sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 
 STATION='/stacja.meteo-krosno.pl'
 ASSETS='/meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/assets'
