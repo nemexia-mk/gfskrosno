@@ -1,9 +1,6 @@
 name: METMOD – dobowe dane Krosno
 
 on:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/metmod.yml']
   schedule:
     - cron: '45 8,14 * * *' # UTC; drugi odczyt uzupełnia opóźnione dane
   workflow_dispatch:
