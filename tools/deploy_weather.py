@@ -18,7 +18,9 @@ def read(ftp,path,optional=False):
     out=io.BytesIO()
     try: ftp.retrbinary('RETR '+path,out.write)
     except ftplib.error_perm as exc:
-        if optional and str(exc).startswith('550'): return None
+        if optional and str(exc).startswith('550'):
+            names={Path(n).name for n in ftp.nlst(str(Path(path).parent))}
+            if Path(path).name not in names: return None
         raise
     return out.getvalue()
 
@@ -79,6 +81,10 @@ def main():
             assert header==SCHEMA,'Zmieniony schemat CSV'
             extra=json.loads(read(ftp,ASSETS+'/gfs-extra.json'))
             assert len(extra['rows'])==209,'Niepełna prognoza'
+            run=datetime.fromisoformat(extra['run'].replace('Z','+00:00'))
+            expected=Path('gfs_krosno_full')/('krosno_gfs_'+run.strftime('%Y%m%d_%H')+'z.csv')
+            assert read(ftp,STATION+'/gfs-tab.csv')==expected.read_bytes(),'Niezgodny CSV GFS'
+            assert read(ftp,STATION+'/gfs-conv.csv')==Path('gfs_krosno_conv/gfs-conv.csv').read_bytes(),'Niezgodny CSV konwekcji'
             print('DEPLOYMENT_VERIFIED',extra['run'],len(extra['rows']),'terminów; schemat CSV zachowany')
 
 

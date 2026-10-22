@@ -1,0 +1,67 @@
+name: Verify and deploy weather upgrade
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/weather-deploy.yml']
+permissions:
+  contents: read
+concurrency:
+  group: gfs-krosno-publish
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      FTP_HOST: corn.cba.pl
+      FTP_USER: nemexia
+      FTP_PASS: ${{ secrets.FTP_PASS }}
+      FTP_SITE_ASSETS_DIR: /meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/assets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - run: pip install 'numpy<3' 'pandas<3' 'matplotlib<4' requests xlsxwriter python-dotenv eccodes metpy
+      - name: Test original CSV and extended diagnostics
+        run: python -m unittest discover -s tests -p test_gfs_weather.py -v
+      - name: Test website
+        run: |
+          node --check site/app.js
+          node tests/test_weather_frontend.cjs
+      - name: Select consistent forecast run
+        run: python -c "import gfs_krosno as g,os; d,h=g.select_run(); open(os.environ['GITHUB_ENV'],'a').write('GFS_RUN='+d+h+'\n')"
+      - name: Generate complete NOAA forecast without changing server
+        run: python gfs_krosno.py --run "$GFS_RUN" --no-ftp --skip-previous --max-wait 30
+      - name: Verify convection using the complete same run
+        run: python gfs_conv.py --run "$GFS_RUN" --reuse-gribs --no-ftp
+      - name: Check actual extended parameters
+        run: python tools/verify_weather_outputs.py
+      - name: Back up server and replace both Python scripts
+        run: python tools/deploy_weather.py prepare
+      - name: Publish verified forecasts and run archives
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import gfs_krosno as g
+          import gfs_conv as c
+          run=os.environ['GFS_RUN']; rd,rh=run[:8],run[8:]
+          files=[str(p) for p in Path(g.OUTPUT_DIR).glob('*') if p.suffix in ('.csv','.json','.xlsx','.png')]
+          assert g.upload_to_ftp(files,rd,rh), 'Nieudana publikacja GFS'
+          c.upload_to_ftp([str(p) for p in Path(c.OUTPUT_DIR).glob('*') if p.suffix in ('.csv','.xlsx')],rd,rh)
+          PY
+      - name: Deploy backed-up meteorogram and homepage
+        run: python tools/deploy_weather.py site
+      - name: Verify server bytes and unchanged CSV schema
+        run: python tools/deploy_weather.py verify
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: weather-deployment-report
+          path: |
+            gfs_krosno_full/*.json
+            gfs_krosno_full/*.csv
+            gfs_krosno_conv/*.csv
+          retention-days: 7
