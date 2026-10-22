@@ -2,7 +2,7 @@ import csv
 import io
 import unittest
 from datetime import date
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import ftplib
 import metmod as m
 
@@ -41,6 +41,50 @@ class FakeFTP:
 
 
 class MetmodTests(unittest.TestCase):
+    def response(self, content):
+        response = Mock(status_code=200, content=content.encode())
+        response.raise_for_status.return_value = None
+        return response
+    def test_batch_fetches_seven_days_in_one_request(self):
+        days = [date(2026, 10, d) for d in range(14, 21)]
+        page = html().replace('</table>', ''.join(
+            html().split('</tr>')[1].replace('2026-10-20', day.isoformat()) + '</tr>'
+            for day in days[:-1]) + '</table>')
+        client = Mock(); client.get.return_value = self.response(page)
+        updates, missing = m.fetch_days(client, days)
+        self.assertEqual(len(updates), 7); self.assertEqual(missing, [])
+        self.assertEqual(client.get.call_count, 1)
+        self.assertEqual(client.get.call_args.kwargs['params']['dni'], 7)
+    @patch.object(m.time, 'sleep')
+    def test_http_200_without_table_is_retried(self, sleep):
+        client = Mock(); client.get.side_effect = [self.response('<html>Chwilowy brak tabeli</html>'), self.response(html())]
+        updates, missing = m.fetch_days(client, [DAY])
+        self.assertEqual(missing, []); self.assertIn(DAY, updates)
+        self.assertEqual(client.get.call_count, 2); sleep.assert_called_once_with(5)
+    @patch.object(m.time, 'sleep')
+    def test_transient_network_error_is_retried(self, sleep):
+        client = Mock(); client.get.side_effect = [m.requests.Timeout('timeout'), self.response(html())]
+        updates, missing = m.fetch_days(client, [DAY])
+        self.assertEqual(missing, []); self.assertIn(DAY, updates)
+    @patch.object(m.time, 'sleep')
+    def test_partial_response_preserves_successful_days(self, sleep):
+        other = date(2026, 10, 19)
+        client = Mock(); client.get.side_effect = [self.response(html()), self.response(html().replace('2026-10-20', other.isoformat()))]
+        updates, missing = m.fetch_days(client, [other, DAY])
+        self.assertEqual(set(updates), {other, DAY}); self.assertEqual(missing, [])
+    @patch.object(m.time, 'sleep')
+    def test_missing_day_reported_after_bounded_retries(self, sleep):
+        other = date(2026, 10, 19)
+        client = Mock(); client.get.return_value = self.response(html())
+        updates, missing = m.fetch_days(client, [other, DAY])
+        self.assertEqual(set(updates), {DAY}); self.assertEqual(missing, [other])
+        self.assertEqual(client.get.call_count, 3); self.assertEqual(sleep.call_count, 2)
+    @patch.object(m, 'publish')
+    @patch.object(m, 'fetch_days', return_value=({DAY: {9: '0'}}, [date(2026, 10, 19)]))
+    def test_main_reports_incomplete_older_day(self, fetch, publish):
+        with patch('sys.argv', ['metmod.py', '--date', DAY.isoformat(), '--lookback', '2', '--dry-run']):
+            self.assertEqual(m.main(), 1)
+        publish.assert_not_called()
     def test_real_header_mapping_and_zero(self):
         values = m.parse_day(html(), DAY)
         self.assertEqual(values[9], '0,0')
