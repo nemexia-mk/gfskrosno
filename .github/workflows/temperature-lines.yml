@@ -1,4 +1,4 @@
-name: Deploy stronger meteorogram grid
+name: Deploy thicker traces and balanced grid
 on:
   workflow_dispatch:
   push:
