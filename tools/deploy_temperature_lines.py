@@ -14,16 +14,16 @@ data=Path('site/app.js').read_bytes()
 with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=40) as ftp:
     old=read(ftp,ASSET)
     if old==data:
-        print('DEW_GRID_ALREADY_VERIFIED',hashlib.sha256(data).hexdigest())
+        print('BOLD_GRID_ALREADY_VERIFIED',hashlib.sha256(data).hexdigest())
         raise SystemExit(0)
-    assert hashlib.sha256(old).hexdigest()=='97c87adb69e1880a349ba49dd4dbf0fccfd5fa0864cefb497614954415b8687d','Live asset changed; stop to avoid overwriting'
-    backup=BACKUP+'/app-before-dew-grid-'+stamp+'.js'
+    assert hashlib.sha256(old).hexdigest()=='f5dd50432ad92a775f0396620d18c1fb15b0a291e89bb3e263811abe25d1e7f1','Live asset changed; stop to avoid overwriting'
+    backup=BACKUP+'/app-before-bold-grid-'+stamp+'.js'
     save(ftp,backup,old)
-    temporary=ASSET+'.dew-'+stamp
+    temporary=ASSET+'.bold-'+stamp
     save(ftp,temporary,data)
     ftp.rename(temporary,ASSET)
     assert read(ftp,ASSET)==data
-    print('DEW_GRID_DEPLOYED',hashlib.sha256(data).hexdigest(),'BACKUP',backup)
+    print('BOLD_GRID_DEPLOYED',hashlib.sha256(data).hexdigest(),'BACKUP',backup)
     for slug in ('','meteorogram','prognoza'):
         directory=CACHE+('/'+slug if slug else '')
         try: names=ftp.nlst(directory)
@@ -34,6 +34,6 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
             source=directory+'/'+name; cached=read(ftp,source)
             plain=gzip.decompress(cached) if cached.startswith(b'\x1f\x8b') else cached
             if b'meteo-krosno-modern/assets/app.js' not in plain: continue
-            save(ftp,BACKUP+'/dew-pagecache-'+stamp+'-'+(slug or 'home')+'-'+name,cached)
+            save(ftp,BACKUP+'/bold-pagecache-'+stamp+'-'+(slug or 'home')+'-'+name,cached)
             ftp.delete(source)
             print('PAGE_CACHE_REFRESHED',slug or 'home')
