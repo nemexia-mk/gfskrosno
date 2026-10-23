@@ -1,4 +1,4 @@
-name: Deploy T2m top layer and lighter grid
+name: Deploy precipitation phases and subzero background
 on:
   workflow_dispatch:
   push:
