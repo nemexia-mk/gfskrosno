@@ -15,6 +15,26 @@ const rows=Array.from({length:24},(_,n)=>({time:start+n*3600000,date:'2026-10-22
  wind:3+n,gust:n===9?null:8+n,dir:200,pressure:990+n*2,snow:0,rain:0,type:'Brak',stormLevel:0,
  cloud:100,cloudLow:100,cloudMid:50,cloudHigh:75,ceiling:200+n*80,vis:5+n,fog:10}));
 const svg=ctx.mgSvg(rows,start,start+24*3600000);
+const part=ctx.mgPrecipParts({rain:2,type:'Deszcz',frozenPct:25});
+assert.equal(part.liquid,1.5);assert.equal(part.solid,.5);assert.equal(part.parts.reduce((n,p)=>n+p.amount,0),2);
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Deszcz',frozenPct:0}).solid,0);
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Śnieg',frozenPct:100}).solid,2);
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Deszcz',frozenPct:null}).solid,null);
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Deszcz',frozenPct:101}).solid,null);
+assert.equal(ctx.mgPrecipParts({rain:null,type:'Deszcz',frozenPct:50}).parts.length,0);
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Deszcz marznący',frozenPct:0}).parts[0].color,'#ec4899');
+assert.equal(ctx.mgPrecipParts({rain:2,type:'Ziarna lodowe',frozenPct:100}).parts[1].color,'#a855f7');
+const wetRows=rows.map((r,i)=>({...r,rain:i<3?2:0,frozenPct:i===0?25:i===1?0:i===2?100:null,convRain:i===0?.6:0,type:i===2?'Śnieg':'Deszcz'}));
+const wet=ctx.mgSvg(wetRows,start,start+24*3600000);
+assert.equal((wet.match(/data-convective-precip=/g)||[]).length,1);
+assert.match(wet,/data-convective-precip="0.6"/);
+assert.match(wet,/data-precip-part="solid" data-amount="0.5"/);
+assert.equal((wet.match(/data-precip-part="liquid"/g)||[]).length,2);
+assert.equal((wet.match(/data-precip-part="solid"/g)||[]).length,2);
+assert.match(wet,/data-subzero-background="true"/);
+assert(!ctx.mgSvg(rows.map(r=>({...r,temp:10,apparent:9,dew:5,groundTemp:12})),start,start+24*3600000).includes('data-subzero-background'));
+assert.match(ctx.mgSvg(rows.map(r=>({...r,temp:-10,apparent:-12,dew:-15,groundTemp:-8})),start,start+24*3600000),/data-subzero-background="true"/);
+
 assert.equal((svg.match(/data-gust-tick=/g)||[]).length,23);
 assert.equal((svg.match(/data-ground-temp=/g)||[]).length,23);
 assert.equal((svg.match(/data-dew-point=/g)||[]).length,24);
@@ -59,5 +79,5 @@ for(const value of [-5,5]){
  const oneSign=ctx.mgSvg(rows.map(r=>({...r,temp:value,dew:value-2,groundTemp:value})),start,start+24*3600000);
  assert(!/NaN|undefined/.test(oneSign));
 }
-if(process.argv.includes('--preview'))fs.writeFileSync('/tmp/meteo-style-preview.html','<!doctype html><meta charset="utf-8"><body style="margin:0;background:white">'+svg+'</body>');
+if(process.argv.includes('--preview'))fs.writeFileSync('/tmp/meteo-style-preview.html','<!doctype html><meta charset="utf-8"><body style="margin:0;background:white">'+wet+'</body>');
 console.log('Styles: cloud ticks 0/2/4/6/8; ground and gust ticks; thick air/apparent lines; 3-hour grid and at most 6 temperature ticks; fixed pressure/wind colors; both wind units verified.');
