@@ -1,4 +1,4 @@
-name: Deploy thicker traces and balanced grid
+name: Deploy T2m top layer and lighter grid
 on:
   workflow_dispatch:
   push:
