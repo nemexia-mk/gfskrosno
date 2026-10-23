@@ -4,6 +4,9 @@ on:
   schedule:
     - cron: '45 8,14 * * *' # UTC; drugi odczyt uzupełnia opóźnione dane
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/metmod.yml']
 
 concurrency:
   group: metmod-zbiorczy-csv
@@ -24,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: python -m pip install 'requests>=2.32,<3' 'beautifulsoup4>=4.12,<5'
       - name: Test parser and safe CSV publication
-        run: python -m unittest discover -s tests -v
+        run: python -m unittest discover -s tests -p 'test_metmod.py' -v
       - name: Update last seven days without duplicates
         env:
           FTP_HOST: corn.cba.pl
