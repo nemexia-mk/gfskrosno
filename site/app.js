@@ -373,7 +373,7 @@ function mgSvg(rows,start,end){
  if(p.id==='base'){
  const yBase=v=>yb-Math.log1p(Math.max(0,Math.min(20000,v))/100)/Math.log1p(200)*p.h;
  const yVis=v=>yb-Math.log1p(Math.max(0,Math.min(50,v))/.1)/Math.log1p(500)*p.h;
- [0,100,300,1000,3000,10000,20000].forEach(v=>{const yy=yBase(v);s+='<path d="M'+L+' '+yy+'H'+(w-R)+'" stroke="#000000" stroke-width=".9" stroke-dasharray="1 3"/>'+txt(L-8,yy+4,fmt(v,0),10,'#0000aa','end');});
+ [0,100,300,1000,3000,10000,20000].forEach(v=>{const yy=yBase(v);s+='<path d="M'+L+' '+yy+'H'+(w-R)+'" stroke="#000000" stroke-width="1.8" stroke-dasharray="3 3"/>'+txt(L-8,yy+4,fmt(v,0),10,'#0000aa','end');});
  [0,.1,.3,1,3,10,50].forEach(v=>s+=txt(w-R+8,yVis(v)+4,fmt(v,v>0&&v<1?1:0),10,'#ff9600'));
  s+=txt(w-R+8,y0-5,'km',10,'#ff9600');
  s+='<path d="M16 '+(y0+53)+'h19" stroke="#ff9600" stroke-width="2"/>'+txt(41,y0+57,'Widzialność (prawa oś)',10,'#d97706');
@@ -404,7 +404,7 @@ function mgSvg(rows,start,end){
  if(['pressure','wind','snow'].includes(p.id)){const key=p.keys[0],fill=p.id==='pressure'?'url(#mg-fill-pressure)':p.id==='wind'?'url(#mg-fill-wind)':'#b9defa';segments(key).forEach(rs=>{if(rs.length>1){const base=yb;s+='<path clip-path="url(#mg-clip-'+p.id+')" d="M'+x(rs[0].time)+','+base+' L'+rs.map(r=>x(r.time)+','+y(r.v)).join(' L')+' L'+x(rs.at(-1).time)+','+base+'Z" fill="'+fill+'" opacity="'+'1'+'"/>';}});}
  if(p.id==='cloud'){p.keys.forEach((key,ki)=>{segments(key).forEach(rs=>{if(rs.length>1)s+='<path clip-path="url(#mg-clip-cloud)" d="M'+x(rs[0].time)+','+yb+' L'+rs.map(r=>x(r.time)+','+y(r.v/12.5)).join(' L')+' L'+x(rs.at(-1).time)+','+yb+'Z" fill="'+['#ffffff','#969696','#5a5a5a'][ki]+'" opacity="1"/>';});});}
  const ticks=zeroSnow?[0]:tickStep?Array.from({length:Math.round((hi-lo)/tickStep)+1},(_,i)=>lo+i*tickStep):Array.from({length:5},(_,i)=>lo+(hi-lo)*i/4);
- for(const v of ticks){const yt=y(v);s+='<path d="M'+L+' '+yt+'H'+(w-R)+'" stroke="#000000" stroke-width=".9" stroke-dasharray="1 3"/>';s+=txt(L-8,yt+4,fmt(v,p.id==='temp'&&!Number.isInteger(tickStep)?1:0),10,'#0000aa','end');if(p.id==='wind')s+=txt(w-R+8,yt+4,fmt(v*3.6,0),10,'#5a6774');else if(!['rain','cloud'].includes(p.id))s+=txt(w-R+8,yt+4,fmt(v,p.id==='temp'&&!Number.isInteger(tickStep)?1:0),10,'#5a6774');}
+ for(const v of ticks){const yt=y(v);s+='<path d="M'+L+' '+yt+'H'+(w-R)+'" stroke="#000000" stroke-width="1.8" stroke-dasharray="3 3"/>';s+=txt(L-8,yt+4,fmt(v,p.id==='temp'&&!Number.isInteger(tickStep)?1:0),10,'#0000aa','end');if(p.id==='wind')s+=txt(w-R+8,yt+4,fmt(v*3.6,0),10,'#5a6774');else if(!['rain','cloud'].includes(p.id))s+=txt(w-R+8,yt+4,fmt(v,p.id==='temp'&&!Number.isInteger(tickStep)?1:0),10,'#5a6774');}
  if(p.id==='temp'&&lo<0&&hi>0)s+='<path d="M'+L+' '+y(0)+'H'+(w-R)+'" stroke="#1e68ae" stroke-width="1.2"/>';
  p.keys.forEach((key,ki)=>{
  if(p.id==='rain'){rows.forEach(r=>{if(valid(r.rain)&&r.rain>=0){const bw=W/mgHours*.76;const shownRain=Math.min(hi,r.rain);s+='<rect clip-path="url(#mg-clip-rain)" x="'+(x(r.time)-bw/2)+'" y="'+y(shownRain)+'" width="'+bw+'" height="'+(yb-y(shownRain))+'" fill="'+mgPrecip(r).color+'"><title>'+esc(r.date)+' UTC · '+mgPrecip(r).label+' · '+fmt(r.rain)+' mm / krok</title></rect>';if(r.rain>25)s+='<circle cx="'+Math.max(L+3,Math.min(w-R-3,x(r.time)))+'" cy="'+(y0+3)+'" r="3" fill="#dc2626"><title>'+esc(r.date)+' UTC · Opad powyżej skali: '+fmt(r.rain)+' mm / krok</title></circle>';}});}
@@ -431,7 +431,7 @@ function mgSvg(rows,start,end){
  if(p.id==='rain'){segments('rh').forEach(rs=>{s+='<path d="M'+rs.map(r=>x(r.time)+','+(yb-r.v/100*p.h)).join(' L')+'" fill="none" stroke="#b06312" stroke-width="1.6"/>';});for(let r=0;r<=100;r+=25)s+=txt(w-R+8,yb-r/100*p.h+4,r+'%',10,'#a35e12');}
  if(!vs.length&&!(p.id==='cloud'&&rows.some(r=>valid(r.fog))))s+=txt(L+W/2,y0+p.h/2,'Brak danych',12,'#5d6d7b','middle');
  }
- for(let t=Math.ceil(start/10800000)*10800000;t<=end;t+=10800000){const h=new Date(t).getUTCHours(),major=h%6===0;s+='<path data-grid-hour="'+h+'" d="M'+x(t)+' '+y0+'V'+yb+'" stroke="#000000" stroke-width="'+(h===0?'1.2':major?'1.05':'.85')+'"'+(h===0?'':' stroke-dasharray="1 3"')+'/>';}
+ for(let t=Math.ceil(start/10800000)*10800000;t<=end;t+=10800000){const h=new Date(t).getUTCHours(),major=h%6===0;s+='<path data-grid-hour="'+h+'" d="M'+x(t)+' '+y0+'V'+yb+'" stroke="#000000" stroke-width="'+(h===0?'2.4':major?'2.1':'1.7')+'"'+(h===0?'':' stroke-dasharray="3 3"')+'/>';}
  s+='<rect x="'+L+'" y="'+y0+'" width="'+W+'" height="'+p.h+'" fill="none" stroke="#000000" stroke-width="1"/>';
  if(p.id==='wind')s+=txt(L-8,y0-4,'m/s',9,'#526478','end')+txt(w-R+8,y0-4,'km/h',9,'#657483');
  });
