@@ -1,4 +1,4 @@
-name: Deploy dew point and clearer grid
+name: Deploy stronger meteorogram grid
 on:
   workflow_dispatch:
   push:
