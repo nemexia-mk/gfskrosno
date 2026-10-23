@@ -17,6 +17,13 @@ const rows=Array.from({length:24},(_,n)=>({time:start+n*3600000,date:'2026-10-22
 const svg=ctx.mgSvg(rows,start,start+24*3600000);
 assert.equal((svg.match(/data-gust-tick=/g)||[]).length,23);
 assert.equal((svg.match(/data-ground-temp=/g)||[]).length,23);
+assert.equal((svg.match(/data-dew-point=/g)||[]).length,24);
+assert.match(svg,/data-dew-point="-8"[^>]*fill="#7c3aed"/);
+const dewMissing=ctx.mgSvg(rows.map((r,i)=>({...r,dew:i===0?0:i===1?null:r.dew})),start,start+24*3600000);
+assert.equal((dewMissing.match(/data-dew-point=/g)||[]).length,23);
+assert.match(dewMissing,/data-dew-point="0"/);
+assert.match(svg,/stroke-width="\.9" stroke-dasharray="1 3"/);
+assert.match(svg,/data-grid-hour="3"[^>]*stroke-width="\.85"/);
 assert.match(svg,/stroke="#d52626" stroke-width="3"/);
 assert.match(svg,/stroke="#2384e8" stroke-width="3"/);
 assert(!svg.includes('mg-temp-sign'));
