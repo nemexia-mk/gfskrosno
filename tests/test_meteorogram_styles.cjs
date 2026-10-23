@@ -22,8 +22,8 @@ assert.match(svg,/data-dew-point="-8"[^>]*fill="#7c3aed"/);
 const dewMissing=ctx.mgSvg(rows.map((r,i)=>({...r,dew:i===0?0:i===1?null:r.dew})),start,start+24*3600000);
 assert.equal((dewMissing.match(/data-dew-point=/g)||[]).length,23);
 assert.match(dewMissing,/data-dew-point="0"/);
-assert.match(svg,/stroke-width="1.53" stroke-dasharray="3 3"/);
-assert.match(svg,/data-grid-hour="3"[^>]*stroke-width="1.445"/);
+assert.match(svg,/stroke-width="1.3005" stroke-dasharray="3 3"/);
+assert.match(svg,/data-grid-hour="3"[^>]*stroke-width="1.22825"/);
 assert.match(svg,/stroke="#d52626" stroke-width="4"/);
 assert.match(svg,/stroke="#2384e8" stroke-width="4"/);
 assert(!svg.includes('mg-temp-sign'));
@@ -31,6 +31,12 @@ const tempPanel=svg.slice(svg.indexOf('>Temperatura</text>'),svg.indexOf('>Opad 
 assert(!/<path clip-path="url\(#mg-clip-temp\)"[^>]*fill="(?!none)/.test(tempPanel));
 const tempTicks=[...tempPanel.matchAll(/<text x="194"[^>]*>([^<]+)<\/text>/g)].map(m=>m[1]);
 assert(tempTicks.length<=6);
+const overlap=ctx.mgSvg(rows.map(r=>({...r,temp:r.apparent})),start,start+24*3600000);
+const overlapPanel=overlap.slice(overlap.indexOf('>Temperatura</text>'),overlap.indexOf('>Opad i wilgotność</text>'));
+const traces=[...overlapPanel.matchAll(/<path clip-path="url\(#mg-clip-temp\)"[^>]*stroke="(#[a-f0-9]+)"/g)].map(m=>m[1]);
+assert(traces.includes('#2384e8')&&traces.includes('#d52626'));
+assert.equal(traces.at(-1),'#d52626','T2m must paint above apparent temperature');
+
 const gridHours=[...svg.matchAll(/data-grid-hour="(\d+)"/g)].map(m=>+m[1]);
 assert(gridHours.length>0&&gridHours.every(h=>h%3===0));
 for(const values of [[-30,40],[-3,3],[10,10],[],[-.1,.1],[-100,60]]){
