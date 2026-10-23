@@ -14,16 +14,16 @@ data=Path('site/app.js').read_bytes()
 with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=40) as ftp:
     old=read(ftp,ASSET)
     if old==data:
-        print('T2M_LAYER_ALREADY_VERIFIED',hashlib.sha256(data).hexdigest())
+        print('PRECIP_PHASES_ALREADY_VERIFIED',hashlib.sha256(data).hexdigest())
         raise SystemExit(0)
-    assert hashlib.sha256(old).hexdigest()=='375803d674b5e9dadd8056f5bb49704546f801dbb8ec35d1b4b8cb87e1ba1a81','Live asset changed; stop to avoid overwriting'
-    backup=BACKUP+'/app-before-t2m-layer-'+stamp+'.js'
+    assert hashlib.sha256(old).hexdigest()=='80b1262999030017fa6c639187a97a7bb1ab282bf5ca56b78cae6c95d6dae67c','Live asset changed; stop to avoid overwriting'
+    backup=BACKUP+'/app-before-precip-phases-'+stamp+'.js'
     save(ftp,backup,old)
-    temporary=ASSET+'.layer-'+stamp
+    temporary=ASSET+'.phases-'+stamp
     save(ftp,temporary,data)
     ftp.rename(temporary,ASSET)
     assert read(ftp,ASSET)==data
-    print('T2M_LAYER_DEPLOYED',hashlib.sha256(data).hexdigest(),'BACKUP',backup)
+    print('PRECIP_PHASES_DEPLOYED',hashlib.sha256(data).hexdigest(),'BACKUP',backup)
     for slug in ('','meteorogram','prognoza'):
         directory=CACHE+('/'+slug if slug else '')
         try: names=ftp.nlst(directory)
@@ -34,6 +34,6 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
             source=directory+'/'+name; cached=read(ftp,source)
             plain=gzip.decompress(cached) if cached.startswith(b'\x1f\x8b') else cached
             if b'meteo-krosno-modern/assets/app.js' not in plain: continue
-            save(ftp,BACKUP+'/layer-pagecache-'+stamp+'-'+(slug or 'home')+'-'+name,cached)
+            save(ftp,BACKUP+'/phases-pagecache-'+stamp+'-'+(slug or 'home')+'-'+name,cached)
             ftp.delete(source)
             print('PAGE_CACHE_REFRESHED',slug or 'home')
