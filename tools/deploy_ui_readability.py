@@ -27,14 +27,31 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
         staged.append((path,old,new))
     csspath=THEME+'/assets/style.css';old=read(f,csspath);extra=Path('site/ui-readability.css').read_bytes()
     marker=b'/* Meteo Krosno: czytelno'
-    assert marker not in old,'Styles already applied; inspect before retry'
-    staged.append((csspath,old,old+b'\n'+extra))
-    for p,old,new in staged:write(f,backup+'/'+PurePosixPath(p).name,old)
+    if marker in old:
+        assert old.endswith(extra),'Different readability styles already present'
+        staged.append((csspath,old,old))
+    else:staged.append((csspath,old,old+b'\n'+extra))
+    # Cache-bust the static station script URL in its existing PHP renderer.
+    candidates=[]
+    for directory in (ROOT+'/plugins/mk-station-dashboards',ROOT+'/mu-plugins'):
+        for item in f.nlst(directory):
+            name=PurePosixPath(item).name
+            if not name.endswith('.php'):continue
+            path=directory+'/'+name;code=read(f,path)
+            needle=b'station-live.js?v=2.5.3'
+            target=b'station-live.js?v=2.5.4'
+            if needle in code:
+                staged.append((path,code,code.replace(needle,target)));candidates.append(path)
+            elif target in code:candidates.append(path)
+    assert candidates,'Static station script URL not found; inspect renderer before changing it'
+    print('STATION_CACHE_VERSION',candidates)
+    for i,(p,old,new) in enumerate(staged):write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)
     write(f,backup+'/manifest.json',json.dumps({'files':[{'path':p,'sha256':hashlib.sha256(old).hexdigest()} for p,old,new in staged]},indent=2).encode())
     changed=[]
     try:
         for p,old,new in staged:
             assert read(f,p)==old,'File changed while staging: '+p
+            if old==new:continue
             changed.append((p,old));publish(f,p,new)
             print('VERIFIED',p,hashlib.sha256(new).hexdigest())
     except Exception:
