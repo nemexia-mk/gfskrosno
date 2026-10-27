@@ -1,5 +1,5 @@
 name: Publish UI readability and local time fixes
-# Refresh the existing station renderer URL and preserve newer live measurements.
+# Publish a versioned station script through the existing PHP renderer.
 on:
   workflow_dispatch:
   push:

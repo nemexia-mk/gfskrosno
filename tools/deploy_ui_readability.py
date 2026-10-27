@@ -10,6 +10,11 @@ CACHE=ROOT+'/cache/page_enhanced/meteo-krosno.pl'
 stamp=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid4().hex[:8]
 def read(f,p):
     b=io.BytesIO();f.retrbinary('RETR '+p,b.write);return b.getvalue()
+def optional_read(f,p):
+    try:return read(f,p)
+    except ftplib.error_perm as exc:
+        if str(exc).startswith('550') and PurePosixPath(p).name not in {PurePosixPath(n).name for n in f.nlst(str(PurePosixPath(p).parent))}:return None
+        raise
 def write(f,p,b):
     f.storbinary('STOR '+p,io.BytesIO(b));assert read(f,p)==b,'Verification failed: '+p
 def publish(f,p,b):
@@ -33,6 +38,10 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
     else:staged.append((csspath,old,old+b'\n'+extra))
     # Cache-bust the static station script URL in its existing PHP renderer.
     candidates=[]
+    alias=ROOT+'/plugins/mk-station-dashboards/assets/station-live-ui20261027.js'
+    alias_old=optional_read(f,alias);alias_new=Path('site/station-live.js').read_bytes()
+    assert alias_old is None or alias_old==alias_new,'Versioned asset occupied'
+    staged.append((alias,alias_old,alias_new))
     for directory in (ROOT+'/plugins/mk-station-dashboards',ROOT+'/plugins/mk-station-dashboards/templates',ROOT+'/plugins/mk-station-dashboards/includes',ROOT+'/mu-plugins'):
         try:items=f.nlst(directory)
         except ftplib.error_perm:continue
@@ -40,8 +49,8 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
             name=PurePosixPath(item).name
             if not name.endswith('.php'):continue
             path=directory+'/'+name;code=read(f,path)
-            needle=b'station-live.js?v='
-            target=b'station-live.js?mk_ui=20261027&v='
+            needle=b'station-live.js'
+            target=b'station-live-ui20261027.js'
             if needle in code:
                 staged.append((path,code,code.replace(needle,target)));candidates.append(path)
             elif target in code:candidates.append(path)
@@ -49,17 +58,20 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
                 print('RENDERER_REFERENCE',path,[(line[:250].decode('utf-8','replace')) for line in code.splitlines() if b'station-live.js' in line])
     assert candidates,'Static station script URL not found; inspect renderer before changing it'
     print('STATION_CACHE_VERSION',candidates)
-    for i,(p,old,new) in enumerate(staged):write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)
-    write(f,backup+'/manifest.json',json.dumps({'files':[{'path':p,'sha256':hashlib.sha256(old).hexdigest()} for p,old,new in staged]},indent=2).encode())
+    for i,(p,old,new) in enumerate(staged):
+        if old is not None:write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)
+    write(f,backup+'/manifest.json',json.dumps({'files':[{'path':p,'sha256':hashlib.sha256(old).hexdigest() if old is not None else None} for p,old,new in staged]},indent=2).encode())
     changed=[]
     try:
         for p,old,new in staged:
-            assert read(f,p)==old,'File changed while staging: '+p
+            assert optional_read(f,p)==old,'File changed while staging: '+p
             if old==new:continue
             changed.append((p,old));publish(f,p,new)
             print('VERIFIED',p,hashlib.sha256(new).hexdigest())
     except Exception:
-        for p,old in reversed(changed):publish(f,p,old)
+        for p,old in reversed(changed):
+            if old is None:f.delete(p)
+            else:publish(f,p,old)
         raise
     # Back up the matching page caches before removing them; sources are untouched.
     for slug in ('','prognoza','meteorogram','stacje','sprawdzalnosc','stacja-turaszowka','stacja-lesniowka'):
