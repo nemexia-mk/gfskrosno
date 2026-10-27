@@ -1,5 +1,5 @@
 name: Publish UI readability and local time fixes
-# Refresh static station asset version for browser caches.
+# Refresh the existing station renderer URL and preserve newer live measurements.
 on:
   workflow_dispatch:
   push:

@@ -33,16 +33,20 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
     else:staged.append((csspath,old,old+b'\n'+extra))
     # Cache-bust the static station script URL in its existing PHP renderer.
     candidates=[]
-    for directory in (ROOT+'/plugins/mk-station-dashboards',ROOT+'/mu-plugins'):
-        for item in f.nlst(directory):
+    for directory in (ROOT+'/plugins/mk-station-dashboards',ROOT+'/plugins/mk-station-dashboards/templates',ROOT+'/plugins/mk-station-dashboards/includes',ROOT+'/mu-plugins'):
+        try:items=f.nlst(directory)
+        except ftplib.error_perm:continue
+        for item in items:
             name=PurePosixPath(item).name
             if not name.endswith('.php'):continue
             path=directory+'/'+name;code=read(f,path)
-            needle=b'station-live.js?v=2.5.3'
-            target=b'station-live.js?v=2.5.4'
+            needle=b'station-live.js?v='
+            target=b'station-live.js?mk_ui=20261027&v='
             if needle in code:
                 staged.append((path,code,code.replace(needle,target)));candidates.append(path)
             elif target in code:candidates.append(path)
+            elif b'station-live.js' in code:
+                print('RENDERER_REFERENCE',path,[(line[:250].decode('utf-8','replace')) for line in code.splitlines() if b'station-live.js' in line])
     assert candidates,'Static station script URL not found; inspect renderer before changing it'
     print('STATION_CACHE_VERSION',candidates)
     for i,(p,old,new) in enumerate(staged):write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)

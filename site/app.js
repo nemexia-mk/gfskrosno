@@ -190,8 +190,7 @@ async function syncDashboardStations(){
  await Promise.all(ids.map(async id=>{let s=liveData?.stations?.find(x=>x.id===id);if(!s)return;s.rain=null;s.timestamps={...s.timestamps,rain:null};
   try{const response=await fetch('/wp-content/plugins/mk-station-dashboards/station-api.php?station='+id+'&range=6h&resolution=3600',{cache:'no-store',signal:AbortSignal.timeout(25000)});if(!response.ok)throw Error();const p=await response.json();if(p.station!==id||!p.latest)throw Error();const l=p.latest;
    const keys={temp:'temp',humidity:'humidity',dew:'dew',wind:'wind',gust:'gust',direction:'direction',pressure:'pressure',solar:'solar',uv:'uv',rate:'rainrate'};
-   for(const [k,key]of Object.entries(keys)){s[k]=valid(l[key])?l[key]:null;s.timestamps[k]=s[k]===null?null:l.ts;}
-   s.measuredAt=l.ts;s.available=true;s.fallback=p.status!=='live';s.rain=valid(p.stats?.rain)?p.stats.rain:null;s.timestamps.rain=s.rain===null?null:l.ts;s.rainPeriod=rainWindow(l.ts);s.rainConsistent=true;
+   if(!s.measuredAt||l.ts>=s.measuredAt){for(const [k,key]of Object.entries(keys)){s[k]=valid(l[key])?l[key]:null;s.timestamps[k]=s[k]===null?null:l.ts;}s.measuredAt=l.ts;s.available=true;s.fallback=p.status!=='live';}s.rain=valid(p.stats?.rain)?p.stats.rain:null;s.timestamps.rain=s.rain===null?null:l.ts;s.rainPeriod=rainWindow(l.ts);s.rainConsistent=true;
   }catch{s.rain=null;s.rainConsistent=false;}paintLive();
  }));
 }
