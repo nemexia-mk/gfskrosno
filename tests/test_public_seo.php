@@ -13,7 +13,7 @@ function is_singular($type = null) { global $singular, $queried; return $singula
 function esc_html($s) { return htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); }
 function esc_attr($s) { return esc_html($s); } function esc_url($s) { return esc_html($s); }
 function get_the_title($p) { return $p->post_title; }
-function wp_strip_all_tags($s) { return strip_tags($s); } function strip_shortcodes($s) { return $s; }
+function wp_strip_all_tags($s) { return strip_tags(preg_replace('~<(script|style)\b[^>]*>.*?</\1>~is', '', $s)); } function strip_shortcodes($s) { return $s; }
 function wp_trim_words($s, $n, $more = '') { $a = preg_split('/\s+/', $s); return implode(' ', array_slice($a, 0, $n)) . (count($a) > $n ? $more : ''); }
 function get_permalink($p) { return home_url('/2026/10/26/' . $p->post_name . '/'); }
 function get_the_post_thumbnail_url($p, $size) { return false; } function get_site_icon_url($size) { return home_url('/icon.png'); }
