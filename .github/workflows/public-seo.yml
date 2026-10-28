@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: meteo-krosno-ui-publish
+  group: meteo-krosno-public-seo-publish
   cancel-in-progress: false
 jobs:
   deploy:
