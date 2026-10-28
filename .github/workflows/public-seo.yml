@@ -19,6 +19,7 @@ jobs:
         run: |
           php -l site/mu-plugins/mk-public-seo.php
           php tests/test_public_seo.php
+          php tests/test_sitemap_cache.php
           node --check site/app.js
           node tests/test_ui_local_time.cjs
           python -m py_compile tools/deploy_public_seo.py

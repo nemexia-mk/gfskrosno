@@ -7,9 +7,9 @@ import xml.etree.ElementTree as ET
 BASE = 'https://meteo-krosno.pl'
 
 
-def get(path):
+def get(path, user_agent='MeteoKrosno-SEO-check/1.0'):
     try:
-        response = urlopen(Request(BASE + path, headers={'User-Agent': 'MeteoKrosno-SEO-check/1.0', 'Cache-Control': 'no-cache'}), timeout=40)
+        response = urlopen(Request(BASE + path, headers={'User-Agent': user_agent, 'Cache-Control': 'no-cache'}), timeout=40)
     except HTTPError as exc:
         response = exc
     return response.status, response.read().decode('utf-8')
@@ -46,6 +46,16 @@ for path in ['/sitemap.xml', '/page-sitemap.xml', '/post-sitemap.xml']:
         assert BASE + '/prognoza/' in urls and BASE + '/analizator/' in urls and BASE + '/klimat-roczny/' in urls
     all_urls += urls
     print('XML VERIFIED', path, len(urls), flush=True)
+# Repeat identical URLs: an initial PHP response can be correct while a cache hit
+# incorrectly changes its Content-Type to HTML. Include a crawler user-agent too.
+for agent in ['MeteoKrosno-SEO-check/1.0', 'Googlebot']:
+    for path in ['/sitemap.xml', '/page-sitemap.xml', '/post-sitemap.xml']:
+        with urlopen(Request(BASE + path, headers={'User-Agent': agent}), timeout=40) as response:
+            assert response.status == 200
+            assert response.headers.get_content_type() == 'application/xml', (path, dict(response.headers))
+            assert 'noindex' not in response.headers.get('X-Robots-Tag', '')
+            ET.fromstring(response.read())
+        print('XML HEADERS VERIFIED', path, agent, flush=True)
 _, robots = get('/robots.txt')
 assert 'Sitemap: ' + BASE + '/sitemap.xml' in robots and 'sitemap.rss' not in robots
 print('Public SEO verification passed.', flush=True)

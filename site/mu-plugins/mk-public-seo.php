@@ -2,9 +2,18 @@
 /**
  * Plugin Name: Meteo Krosno – publiczne SEO
  * Description: Serwerowe metadane, treść HTML i mapa używanych adresów.
- * Version: 1.0.2
+ * Version: 1.0.3
  */
 if (!defined('ABSPATH')) { exit; }
+
+// W3's disk-enhanced HTML cache must not rewrite XML responses to text/html.
+// Previously cached XML is purged by the deployment before validation.
+$mkseo_xml_path = trim((string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH), '/');
+if (in_array($mkseo_xml_path, ['sitemap.xml', 'sitemap_index.xml', 'wp-sitemap.xml', 'page-sitemap.xml', 'post-sitemap.xml', 'addl-sitemap.xml', 'attachment-sitemap.xml', 'sitemap.rss'], true)) {
+    if (!defined('DONOTCACHEPAGE')) { define('DONOTCACHEPAGE', true); }
+    if (!defined('DONOTMINIFY')) { define('DONOTMINIFY', true); }
+}
+unset($mkseo_xml_path);
 
 function mkseo_path() {
     $path = trim((string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH), '/');
@@ -270,7 +279,7 @@ add_action('init', function () {
     if ($path === 'attachment-sitemap.xml') { status_header(410); header('X-Robots-Tag: noindex'); header('Content-Type: text/plain; charset=UTF-8'); echo 'Mapa załączników została wycofana.'; exit; }
     $types = ['sitemap.xml' => 'index', 'page-sitemap.xml' => 'page', 'post-sitemap.xml' => 'post'];
     if (!isset($types[$path])) { return; }
-    status_header(200); header('Content-Type: application/xml; charset=UTF-8'); header('X-Robots-Tag: noindex, follow'); header('Cache-Control: public, max-age=300');
+    status_header(200); header('Content-Type: application/xml; charset=UTF-8'); header_remove('X-Robots-Tag'); header('Cache-Control: no-store, max-age=0');
     echo mkseo_sitemap_xml($types[$path]); exit;
 }, -900);
 add_filter('robots_txt', function ($text) {
