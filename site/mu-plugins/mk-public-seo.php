@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meteo Krosno – publiczne SEO
  * Description: Serwerowe metadane, treść HTML i mapa używanych adresów.
- * Version: 1.0.1
+ * Version: 1.0.2
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -70,7 +70,7 @@ add_action('init', function () {
 
 // Run once after deployment, through WordPress so its cache indexes stay coherent.
 add_action('init', function () {
-    if (function_exists('w3tc_flush_all') && add_option('mkseo_cache_refreshed_v1', time(), '', false)) {
+    if (function_exists('w3tc_flush_all') && add_option('mkseo_cache_refreshed_v2', time(), '', false)) {
         w3tc_flush_all();
     }
 }, 30);
@@ -148,7 +148,9 @@ function mkseo_article_html($post) {
 function mkseo_content($meta) {
     $html = '<section class="card prose mk-seo-content"><h1>' . esc_html($meta['h1']) . '</h1><p>' . esc_html($meta['intro']) . '</p>';
     $post = get_queried_object();
-    if (!$meta['notfound'] && is_singular() && $post instanceof WP_Post) { $html .= mkseo_article_html($post); }
+    if (!$meta['notfound'] && is_singular() && $post instanceof WP_Post) {
+        $html .= $GLOBALS['mkseo_prepared_articles'][$post->ID] ?? mkseo_article_html($post);
+    }
     if (in_array($meta['path'], ['', 'prognoza', 'meteorogram'], true)) { $html .= mkseo_forecast_html(); }
     if (in_array($meta['path'], ['', 'blog', 'category/podsumowania'], true)) {
         $args = ['post_type' => 'post', 'post_status' => 'publish', 'posts_per_page' => 12, 'has_password' => false];
@@ -212,6 +214,12 @@ function mkseo_html($html) {
 add_action('template_redirect', function () {
     if (is_admin() || is_feed() || mkseo_internal()) { return; }
     if (mkseo_path() === 'przykladowa-strona') { global $wp_query; $wp_query->set_404(); status_header(404); nocache_headers(); }
+    // Blocks and shortcodes may start their own buffers. Render outside our display
+    // handler: PHP forbids starting a buffer from inside another buffer's callback.
+    $post = get_queried_object();
+    if (is_singular() && $post instanceof WP_Post) {
+        $GLOBALS['mkseo_prepared_articles'][$post->ID] = mkseo_article_html($post);
+    }
     ob_start('mkseo_html');
 }, -999);
 add_action('send_headers', function () {

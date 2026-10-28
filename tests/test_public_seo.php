@@ -22,7 +22,10 @@ function get_post_modified_time($format, $gmt, $post) { return '2026-10-27T10:00
 function wp_json_encode($s, $options = 0) { return json_encode($s, $options); }
 function get_template_directory() { return sys_get_temp_dir() . '/missing-mk-theme'; }
 function get_posts($args) { global $fixture_posts; return $fixture_posts; }
-function apply_filters($name, $value) { return $value; }
+function apply_filters($name, $value) {
+    if (!empty($GLOBALS['buffering_filter'])) { ob_start(); echo $value; return ob_get_clean(); }
+    return $value;
+}
 function wp_kses_post($content) { return strip_tags($content, '<h2><p><a><table><tr><td>'); }
 function get_option($key) { global $options; return $options[$key] ?? false; }
 function add_option($key, $value, $unused = '', $autoload = false) { global $options; if (!isset($options[$key])) { $options[$key] = $value; } }
@@ -72,6 +75,12 @@ $out = mkseo_html($fixture);
 check(substr_count($out, '<h1>') === 1 && strpos($out, '<h2>Wyniki</h2>') !== false, 'Article content preserved with single H1');
 check(strpos($out, 'alert(1)') === false, 'Scripts excluded from fallback');
 check(strpos($out, 'datePublished') !== false, 'Article dates in schema');
+// A shortcode-like filter can use buffering, as WordPress blocks actually do.
+$GLOBALS['buffering_filter'] = true;
+$GLOBALS['mkseo_prepared_articles'][$published->ID] = mkseo_article_html($published);
+ob_start(); ob_start('mkseo_html'); echo $fixture; ob_end_flush(); $buffered = ob_get_clean();
+check(strpos($buffered, '<h2>Wyniki</h2>') !== false, 'Prepared article supports shortcode output buffering');
+unset($GLOBALS['mkseo_prepared_articles'], $GLOBALS['buffering_filter']);
 $xml = mkseo_sitemap_xml('post');
 check(strpos($xml, 'podsumowanie-wrzesien-2026') !== false && strpos($xml, 'tajny-szkic') === false && strpos($xml, 'podsumowanie-testowe') === false, 'Only public editorial posts in sitemap');
 $xml = mkseo_sitemap_xml('page');

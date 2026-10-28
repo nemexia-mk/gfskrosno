@@ -78,8 +78,8 @@ def main():
         plugin_path = ROOT + '/wp-content/mu-plugins/mk-public-seo.php'
         plugin_old = optional_read(ftp, plugin_path)
         plugin_new = Path('site/mu-plugins/mk-public-seo.php').read_bytes()
-        previous = 'a462894b3cade867c54b6b1d4561d3494544b72c246a46298dc0d428f3100115'
-        assert plugin_old in (None, plugin_new) or hashlib.sha256(plugin_old).hexdigest() == previous, 'SEO module changed since review'
+        previous = {'a462894b3cade867c54b6b1d4561d3494544b72c246a46298dc0d428f3100115', '1d6cb92fb55f98c12c511dc4b8f4e67ea8aa3cf9708f8fd4d6cec1f33c6b22d4'}
+        assert plugin_old in (None, plugin_new) or hashlib.sha256(plugin_old).hexdigest() in previous, 'SEO module changed since review'
         app_path = THEME + '/assets/app.js'
         app_old = read(ftp, app_path)
         app_new = Path('site/app.js').read_bytes()

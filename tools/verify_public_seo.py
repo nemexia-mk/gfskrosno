@@ -15,7 +15,7 @@ def get(path):
     return response.status, response.read().decode('utf-8')
 
 
-for path in ['/', '/prognoza/', '/meteorogram/', '/analizator/', '/miesiac-na-zywo/', '/stacje/', '/stacja-turaszowka/', '/klimat-miesieczny/']:
+for path in ['/', '/prognoza/', '/meteorogram/', '/analizator/', '/miesiac-na-zywo/', '/stacje/', '/stacja-turaszowka/', '/klimat-miesieczny/', '/2022/08/09/klimatogram-krosno/', '/2026/10/26/podsumowanie-wrzesien-2026/']:
     status, html = get(path)
     assert status == 200, (path, status)
     assert len(re.findall(r'<title\b', html, re.I)) == 1, path
