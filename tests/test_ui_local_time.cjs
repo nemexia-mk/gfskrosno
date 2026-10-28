@@ -18,10 +18,24 @@ vm.runInContext(between('function rainWindow(', 'function paintCurrentStrip('),c
 const period=ctx.rainWindow(Date.parse('2026-10-27T05:00:00Z')/1000);
 assert.equal(new Date(period.start*1000).toISOString(),'2026-10-26T06:00:00.000Z');
 assert.equal(new Date(period.end*1000).toISOString(),'2026-10-27T06:00:00.000Z');
-// Solar strip survives removal of the old station node by the iframe plugin.
-let sunBox={};ctx.$=id=>id==='#overview-sun'?sunBox:null;
-ctx.sunTime=t=>new Date(t*1000).toISOString().slice(11,16);
-vm.runInContext('let liveData={sun:{rise:1793078017,set:1793114398}};',ctx);
-ctx.paintOverviewSun();assert.match(sunBox.innerHTML,/Wschód · czas polski/);assert.doesNotMatch(sunBox.innerHTML,/>—</);
+// The astronomy tile is independent from the iframe plugin and uses local days.
+vm.runInContext(fs.readFileSync('site/vendor/astronomy-2.1.19.min.js','utf8'),ctx);
+let noMoonEvent=false;
+for(let day=1;day<=31;day++){
+ const date='2026-10-'+String(day).padStart(2,'0'),data=ctx.mkAstronomyForDay(ctx.Astronomy,date);
+ for(const k of ['sunrise','sunset','moonrise','moonset'])if(data[k]!==null)assert.equal(ctx.localParts(data[k]).date,date);
+ if(data.moonrise===null||data.moonset===null)noMoonEvent=true;
+ assert(data.sunset>data.sunrise);
+}
+assert(noMoonEvent,'A lunar event absent from a calendar day must remain absent');
+const oct28=ctx.mkAstronomyForDay(ctx.Astronomy,'2026-10-28');
+assert.equal(ctx.localParts(oct28.sunrise).hour,6);assert.equal(ctx.localParts(oct28.sunset).hour,16);
+let sunBox={},duration={};ctx.$=id=>id==='#mk-astro-events'?sunBox:id==='#mk-day-duration'?duration:null;
+vm.runInContext("let today='2026-10-28';mkAstroData=mkAstronomyForDay(Astronomy,today);",ctx);
+ctx.paintOverviewSun(false);assert.match(sunBox.innerHTML,/Wschód księżyca/);assert.match(sunBox.innerHTML,/Zachód słońca/);assert.match(duration.textContent,/Długość dnia/);
+vm.runInContext(between('function mkHomeRain(', 'function paintCurrentStrip('),ctx);
+assert.equal(ctx.mkHomeRain(0),'brak opadu');assert.match(ctx.mkHomeRain(null),/Brak danych/);assert.equal(ctx.mkHomeRain(.04),'Opad <0,1 mm');
+assert.equal(ctx.mkUpcomingHours(hours('2026-10-28T08:00:00Z',8),Date.parse('2026-10-28T09:20:00Z'))[0].time,Date.parse('2026-10-28T10:00:00Z'));
+assert.equal(ctx.mkUpcomingHours(hours('2026-10-28T08:00:00Z',8),Date.parse('2026-10-28T09:20:00Z')).length,4);
 assert.match(source,/#mk-current-strip/);assert.match(source,/rainConsistent/);
-console.log('Local days: 24/23/25 hours; precipitation intervals; partial days; solar strip independent of iframe: OK');
+console.log('Local days 23/24/25h, rain intervals, Sun/Moon calendar-day boundaries, absent lunar events and upcoming hours: OK');

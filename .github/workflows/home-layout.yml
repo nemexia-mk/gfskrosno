@@ -1,0 +1,33 @@
+name: Publish home calendar, hourly preview and climate colors
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/home-layout.yml']
+permissions:
+  contents: read
+concurrency:
+  group: meteo-krosno-ui-publish
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check JavaScript, PHP and calendar calculations
+        run: |
+          node --check site/app.js
+          node --check site/vendor/astronomy-2.1.19.min.js
+          node tests/test_ui_local_time.cjs
+          node tests/test_weather_frontend.cjs
+          node tests/test_meteorogram_clouds.cjs
+          node tests/test_meteorogram_styles.cjs
+          php -l site/mu-plugins/00-mk-climate-palette.php
+          python -m py_compile tools/deploy_home_layout.py
+      - name: Back up and publish home and climate UI
+        env:
+          FTP_HOST: corn.cba.pl
+          FTP_USER: nemexia
+          FTP_PASS: ${{ secrets.FTP_PASS }}
+        run: python tools/deploy_home_layout.py
