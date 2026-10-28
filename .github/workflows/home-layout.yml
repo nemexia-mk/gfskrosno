@@ -1,4 +1,5 @@
 name: Publish home calendar, hourly preview and climate colors
+# Calendar values are rounded to the nearest minute.
 on:
   workflow_dispatch:
   push:

@@ -5,7 +5,7 @@ from datetime import datetime,timezone
 from uuid import uuid4
 ROOT='/meteo-krosno.pl/wp-content'; THEME=ROOT+'/themes/meteo-krosno-modern'; BACKUPS=THEME+'/cache/weather-backups'; CACHE=ROOT+'/cache/page_enhanced/meteo-krosno.pl'
 STAMP=datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid4().hex[:8]
-EXPECTED_APP='cc6a730801e64efc1679eff9b8c1527be391801f312f4bc71dd563282e46243c'
+EXPECTED_APP='24d7440925b8bb6b4277ce56f110ef3f5836a87d03163371861559d15b88f8ac'
 def read(f,p):
     b=io.BytesIO();f.retrbinary('RETR '+p,b.write);return b.getvalue()
 def optional_read(f,p):
@@ -19,11 +19,6 @@ def publish(f,p,b):
     tmp=p+'.layout-'+STAMP;write(f,tmp,b);f.rename(tmp,p);assert read(f,p)==b
 with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=45) as f:
     protection=read(f,BACKUPS+'/.htaccess');assert b'denied' in protection or b'Deny from all' in protection
-    try:
-        ht=read(f,'/meteo-krosno.pl/.htaccess').decode('utf-8','replace')
-        for line in ht.splitlines():
-            if 'RewriteRule' in line and 'klimat-' in line:print('CLIMATE_ROUTE',line[:220])
-    except ftplib.error_perm:pass
     files=[('site/vendor/astronomy-2.1.19.min.js',THEME+'/assets/astronomy-2.1.19.min.js'),('site/climate-panels-20261028.css',THEME+'/assets/climate-panels-20261028.css'),('site/mu-plugins/00-mk-climate-palette.php',ROOT+'/mu-plugins/00-mk-climate-palette.php'),('site/app.js',THEME+'/assets/app.js')]
     staged=[]
     for local,remote in files:
