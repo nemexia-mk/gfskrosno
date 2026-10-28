@@ -61,7 +61,13 @@ def clear_page_cache(ftp, directory, depth=0):
         if facts.get('type') == 'dir':
             clear_page_cache(ftp, path, depth + 1)
         elif facts.get('type') == 'file' and name.startswith('_index') and '.html' in name:
-            ftp.delete(path)  # Generated W3 cache only; no user content.
+            try:
+                ftp.delete(path)  # Generated W3 cache only; no user content.
+            except ftplib.error_perm as exc:
+                # WordPress/W3 may invalidate the same cache after drafting a page.
+                if str(exc).startswith('550') and 'No such file' in str(exc):
+                    continue
+                raise
 
 
 def main():
