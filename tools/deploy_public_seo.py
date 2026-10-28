@@ -9,6 +9,7 @@ import re
 import subprocess
 from datetime import datetime, timezone
 from uuid import uuid4
+from urllib.request import urlopen
 
 ROOT = '/meteo-krosno.pl'
 THEME = ROOT + '/wp-content/themes/meteo-krosno-modern'
@@ -77,7 +78,8 @@ def main():
         plugin_path = ROOT + '/wp-content/mu-plugins/mk-public-seo.php'
         plugin_old = optional_read(ftp, plugin_path)
         plugin_new = Path('site/mu-plugins/mk-public-seo.php').read_bytes()
-        assert plugin_old in (None, plugin_new), 'SEO module path already occupied'
+        previous = 'a462894b3cade867c54b6b1d4561d3494544b72c246a46298dc0d428f3100115'
+        assert plugin_old in (None, plugin_new) or hashlib.sha256(plugin_old).hexdigest() == previous, 'SEO module changed since review'
         app_path = THEME + '/assets/app.js'
         app_old = read(ftp, app_path)
         app_new = Path('site/app.js').read_bytes()
@@ -126,6 +128,9 @@ def main():
                 else:
                     publish(ftp, path, old)
             raise
+        # A noncached request applies the draft migration and one-time native W3 flush.
+        with urlopen('https://meteo-krosno.pl/?mkseo_refresh=' + STAMP, timeout=40) as response:
+            assert response.status == 200 and b'mk-seo-content' in response.read(), 'SEO activation failed'
         clear_page_cache(ftp, ROOT + '/wp-content/cache/page_enhanced/meteo-krosno.pl')
         print('BACKUP', backup, flush=True)
         print('Sample status backup is retained privately in the WordPress option mkseo_sample_previous_status_v1.', flush=True)

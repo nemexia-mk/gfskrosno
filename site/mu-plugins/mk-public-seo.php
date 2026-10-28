@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meteo Krosno – publiczne SEO
  * Description: Serwerowe metadane, treść HTML i mapa używanych adresów.
- * Version: 1.0.0
+ * Version: 1.0.1
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -66,7 +66,14 @@ add_action('init', function () {
         if (is_wp_error($result)) { return; }
     }
     add_option('mkseo_sample_drafted_v1', $post->ID, '', false);
-}, -1000);
+}, 20);
+
+// Run once after deployment, through WordPress so its cache indexes stay coherent.
+add_action('init', function () {
+    if (function_exists('w3tc_flush_all') && add_option('mkseo_cache_refreshed_v1', time(), '', false)) {
+        w3tc_flush_all();
+    }
+}, 30);
 
 function mkseo_meta() {
     $path = mkseo_path(); $routes = mkseo_routes(); $post = get_queried_object();
@@ -188,7 +195,16 @@ function mkseo_html($html) {
         return '<head>' . $head . '</head>';
     }, $html, 1);
     // The app progressively replaces #main; keep a single meaningful server H1.
-    $html = preg_replace_callback('~(<main\b[^>]*\bid=["\']main["\'][^>]*>).*?(</main>)~is', function ($match) use ($meta) { return $match[1] . mkseo_content($meta) . $match[2]; }, $html, 1);
+    $replaced = 0;
+    $html = preg_replace_callback('~(<main\b[^>]*\bid=["\']main["\'][^>]*>).*?(</main>)~is', function ($match) use ($meta) { return $match[1] . mkseo_content($meta) . $match[2]; }, $html, 1, $replaced);
+    // Native PHP dashboards already render full data; preserve them, clarify the H1.
+    if (!$replaced && in_array($meta['path'], ['stacja-turaszowka', 'stacja-lesniowka', 'klimat-miesieczny', 'klimat-roczny'], true)) {
+        $html = preg_replace_callback('~(<h1\b[^>]*>)(.*?)(</h1>)~is', function ($match) use ($meta) {
+            $heading = $meta['h1'];
+            if (strpos($meta['path'], 'klimat-') === 0) { $heading .= ' – ' . wp_strip_all_tags($match[2]); }
+            return $match[1] . esc_html($heading) . $match[3];
+        }, $html, 1);
+    }
     $html = preg_replace('~<noscript>\s*<main\b.*?</main>\s*</noscript>~is', '', $html);
     return $html;
 }

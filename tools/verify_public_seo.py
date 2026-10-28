@@ -23,7 +23,10 @@ for path in ['/', '/prognoza/', '/meteorogram/', '/analizator/', '/miesiac-na-zy
     assert len(re.findall(r'<h1\b', html, re.I)) == 1, path
     assert len(re.findall(r'<meta\b[^>]*name=[\"\']description[\"\']', html, re.I)) == 1, path
     assert len(re.findall(r'<meta\b[^>]*name=[\"\']robots[\"\']', html, re.I)) == 1, path
-    assert 'mk-seo-content' in html, path
+    if path not in ['/stacja-turaszowka/', '/klimat-miesieczny/']:
+        assert 'mk-seo-content' in html, path
+    else:
+        assert '<main' in html and len(html) > 10000, 'Native server dashboard missing: ' + path
     print('HTML VERIFIED', path, flush=True)
 status, html = get('/przykladowa-strona/')
 assert status == 404 and 'piña colad' not in html and 'XYZ Doohickey' not in html

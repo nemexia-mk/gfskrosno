@@ -49,6 +49,10 @@ foreach (mkseo_routes() as $path => $route) {
     $titles[] = $route[0];
 }
 check(count(array_unique($titles)) === count($titles), 'Titles are unique');
+$_SERVER['REQUEST_URI'] = '/klimat-miesieczny/';
+$native = str_replace('<main id="main" class="container"></main>', '<main class="report"><h1>Październik 2026</h1><p>Opad 63,9 mm</p></main>', $fixture);
+$out = mkseo_html($native);
+check(strpos($out, 'Podsumowanie klimatyczne miesiąca – Październik 2026') !== false && strpos($out, 'Opad 63,9 mm') !== false, 'Native report data preserved and heading clarified');
 $_SERVER['REQUEST_URI'] = '/audyt-nieistniejaca/'; $is404 = true;
 $out = mkseo_html($fixture);
 check(strpos($out, 'content="noindex,follow"') !== false, '404 is noindex');
@@ -75,7 +79,7 @@ check(strpos($xml, '/prognoza/') !== false && strpos($xml, '/analizator/') !== f
 $_GET = ['mk_api' => 'gfs']; check(mkseo_internal(), 'API excluded from HTML transformations');
 $_GET = ['mk_station_frame' => 'turaszowka']; check(mkseo_internal(), 'Embedded station excluded from transformations');
 define('OBJECT', 'OBJECT'); $sample = new WP_Post(); $sample->post_type = 'page'; $sample->post_name = 'przykladowa-strona';
-$migration = $hooks['init'][-1000][0]; $migration(); $migration();
+$migration = $hooks['init'][20][0]; $migration(); $migration();
 check($sample->post_status === 'draft' && count($updated) === 1, 'Draft migration is idempotent');
 check($options['mkseo_sample_previous_status_v1']['status'] === 'publish', 'Previous status preserved for rollback');
 echo "Public SEO contracts passed: HTML, metadata, drafts, schema and sitemaps.\n";
