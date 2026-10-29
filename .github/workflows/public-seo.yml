@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
+    if: "!contains(github.event.head_commit.message, '[publication]')"
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:

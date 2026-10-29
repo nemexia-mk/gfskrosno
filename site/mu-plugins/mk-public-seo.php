@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meteo Krosno – publiczne SEO
  * Description: Serwerowe metadane, treść HTML i mapa używanych adresów.
- * Version: 1.0.5
+ * Version: 1.0.6
  */
 if (!defined('ABSPATH')) { exit; }
 
@@ -24,7 +24,7 @@ function mkseo_path() {
 
 /** One explicit inventory, shared by metadata, HTML and the XML sitemap. */
 function mkseo_routes() {
-    return [
+    return apply_filters('mkseo_routes', [
         '' => ['Pogoda w Krośnie – prognoza i pomiary | Meteo Krosno', 'Pogoda w Krośnie', 'Pogoda dla Krosna i powiatu krośnieńskiego: prognoza GFS, pomiary Turaszówki i Leśniówki, ostrzeżenia IMGW oraz klimat regionu.', 'Sprawdź prognozę dla Krosna, obserwacje naszych stacji i historię pogody. Meteo Krosno to społeczny serwis poświęcony pogodzie i klimatowi Krosna oraz okolic.'],
         'prognoza' => ['Prognoza pogody Krosno – godzinowa GFS | Meteo Krosno', 'Prognoza GFS dla Krosna', 'Godzinowa prognoza GFS dla Krosna: temperatura, opady, wiatr, porywy i zachmurzenie. Terminy w czasie polskim, z wyborem przebiegu modelu.', 'Prognoza modelu GFS pokazuje temperaturę na wysokości 2 metrów, opad, wiatr, ciśnienie i zachmurzenie. Godziny prezentujemy w strefie Europe/Warsaw. Wyniki modelu są prognozą, a nie pomiarem stacji; częściowe doby i braki danych wymagają odrębnej interpretacji.'],
         'meteorogram' => ['Meteorogram GFS dla Krosna – 24–120 godzin | Meteo Krosno', 'Meteorogram GFS dla Krosna', 'Meteorogram GFS dla Krosna na 24, 48, 72 lub 120 godzin. Temperatura, opad, wiatr i chmury na wykresie z osią czasu polskiego oraz UTC.', 'Meteorogram zestawia parametry prognozy GFS na wspólnej osi czasu. Zakres zaczyna się od pierwszego terminu wybranego przebiegu modelu. Wykres interaktywny pozwala porównać temperaturę, opad, wilgotność, ciśnienie, wiatr i zachmurzenie; luki w danych nie oznaczają wartości zerowej.'],
@@ -48,7 +48,7 @@ function mkseo_routes() {
         'aktualna-temperatura-w-polsce' => ['Aktualna temperatura w Polsce – mapa | Meteo Krosno', 'Mapa aktualnej temperatury w Polsce', 'Mapa temperatury w Polsce: porównaj warunki w Krośnie i innych regionach na podstawie zewnętrznej mapy obserwacji meteorologicznych.', 'Mapa umożliwia porównanie temperatury w różnych częściach Polski. Czas obserwacji i dostępność stacji zależą od zewnętrznego dostawcy; sprawdzaj termin pomiaru przed porównywaniem miejscowości.'],
         'mapa-satelitarna-polski' => ['Mapa satelitarna Polski – zachmurzenie | Meteo Krosno', 'Mapa satelitarna Polski', 'Zdjęcia satelitarne i zachmurzenie nad Polską. Obserwuj układy chmur oraz ich przemieszczanie na mapie dostępnej w Meteo Krosno.', 'Zdjęcia satelitarne pomagają śledzić zasięg i przemieszczanie zachmurzenia nad Polską. Termin obrazu jest istotny dla jego interpretacji. Sam obraz chmur nie jest pomiarem opadu przy powierzchni ziemi.'],
         '2022/08/09/klimatogram-krosno' => ['Klimatogram Krosna – temperatura i opady | Meteo Krosno', 'Klimatogram Krosna', 'Klimatogram Krosna: roczny przebieg temperatury i opadów oraz omówienie klimatu miasta na podstawie danych meteorologicznych.', 'Klimatogram pokazuje typowy przebieg temperatury i opadów w kolejnych miesiącach. Przy porównywaniu wykresów zwróć uwagę na opisany okres odniesienia i źródło obserwacji.']
-    ];
+    ]);
 }
 
 function mkseo_internal() {
@@ -59,7 +59,7 @@ function mkseo_internal() {
 }
 
 function mkseo_excluded_post($post) {
-    return !$post || $post->post_status !== 'publish' || in_array($post->post_name, ['przykladowa-strona', 'podsumowanie-testowe'], true);
+    return !$post || $post->post_status !== 'publish' || in_array($post->post_name, ['przykladowa-strona', 'podsumowanie-testowe', 'testowy-wpis-prognozy'], true);
 }
 
 /** Reversible one-time migration. Preserve the exact previous status privately. */
@@ -222,7 +222,7 @@ function mkseo_html($html) {
 
 add_action('template_redirect', function () {
     if (is_admin() || is_feed() || mkseo_internal()) { return; }
-    if (mkseo_path() === 'przykladowa-strona') { global $wp_query; $wp_query->set_404(); status_header(404); nocache_headers(); }
+    if (in_array(mkseo_path(), ['przykladowa-strona', '2019/08/14/testowy-wpis-prognozy'], true)) { global $wp_query; $wp_query->set_404(); status_header(404); nocache_headers(); }
     // Blocks and shortcodes may start their own buffers. Render outside our display
     // handler: PHP forbids starting a buffer from inside another buffer's callback.
     $post = get_queried_object();
