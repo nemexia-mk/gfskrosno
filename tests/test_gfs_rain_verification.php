@@ -64,4 +64,8 @@ check($stats['hits'] === 1 && $stats['misses'] === 1 && $stats['falseAlarms'] ==
 check($stats['pod'] == 50 && $stats['far'] == 50 && abs($stats['csi'] - 100 / 3) < 0.001, 'POD, FAR and CSI');
 $dry = mkrv_stats([['bin' => '6–24', 'forecast' => 0, 'observed' => 0, 'error' => 0]])[0];
 check($dry['mae'] == 0 && $dry['csi'] === null && $dry['pod'] === null && $dry['far'] === null, 'All dry is not 100 percent rain skill');
+$body = json_encode(station('lesniowka', $end, 0));
+check(mkrv_capture_response($body, 'live', $end) === $body, 'Response capture must preserve exact JSON bytes');
+check(get_option('mkrv_obs_lesniowka')[$end]['total'] === 0.0, 'A public live response archives a real zero independently of cron');
+check(mkrv_capture_response('invalid JSON', 'gfs', $end) === 'invalid JSON', 'Capture must not change upstream errors');
 echo "Rain verification: immutable forecasts, complete aligned intervals, counter resets, no hindsight, station isolation and scores OK\n";

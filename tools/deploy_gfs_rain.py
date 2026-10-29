@@ -57,7 +57,7 @@ def main():
             if remote.endswith('/app.js'):
                 assert old == new or (old is not None and hashlib.sha256(old).hexdigest() == EXPECTED_APP), 'Live frontend changed since review'
             else:
-                assert old is None or old == new, 'Rain plugin path already occupied by different code'
+                assert old is None or old == new or hashlib.sha256(old).hexdigest() == 'd86fd19d694c2646f8c4b1420076b9413cfd5b21aca39c7e4f59247a0738103a', 'Rain plugin changed since review'
             staged.append((remote, old, new))
         backup = BACKUPS + '/rain-' + STAMP
         ftp.mkd(backup)

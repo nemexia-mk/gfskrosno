@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Meteo Krosno – sprawdzalność opadów GFS
  * Description: Immutable forecasts and complete six-hour precipitation comparisons.
- * Version: 1.0.0
+ * Version: 1.0.1
  */
 if (!defined('ABSPATH')) exit;
 
@@ -73,6 +73,25 @@ add_action('init', function () {
     if (!wp_next_scheduled('mkrv_collect')) wp_schedule_event(time(), 'mkrv_five_minutes', 'mkrv_collect');
 });
 add_action('mkrv_collect', 'mkrv_collect');
+
+// Also archive the public live/GFS responses that visitors already request.
+// This uses the sensor's own timestamp and needs no extra upstream API call.
+// It keeps collection moving when a host delays WordPress's background cron.
+function mkrv_capture_response($body, $kind, $now = null) {
+    try {
+        $data = json_decode($body, true);
+        if (is_array($data)) {
+            if ($kind === 'gfs') mkrv_capture_forecast($data, $now);
+            elseif ($kind === 'live') mkrv_capture_observations($data, $now);
+        }
+    } catch (Throwable $error) { error_log('Meteo Krosno: rain response capture failed.'); }
+    return $body;
+}
+add_action('template_redirect', function () {
+    $kind = $_GET['mk_api'] ?? '';
+    if (!in_array($kind, ['gfs', 'live'], true)) return;
+    ob_start(function ($body) use ($kind) { return mkrv_capture_response($body, $kind); });
+}, -40);
 
 function mkrv_observed_sum($observations, $start, $end) {
     $previous = null;
