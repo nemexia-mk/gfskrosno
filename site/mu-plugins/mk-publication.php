@@ -4,7 +4,7 @@
  * Version: 1.0.0
  */
 if (!defined('ABSPATH')) exit;
-const MKP_VERSION = '20261029b';
+const MKP_VERSION = '20261029c';
 // Public identity must be supplied by the site operator, never inferred from a login.
 const MKP_ADMIN_NAME = '';
 const MKP_CONTACT_EMAIL = '';
@@ -66,8 +66,8 @@ add_action('init', function () {
 function mkp_humidity($inventory, $now = null) {
     $now = $now ?? time();
     foreach (($inventory['sensors'] ?? []) as $row) {
-        $sensor = strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $row['sensor'] ?? ''));
-        if (!preg_match('/(?:^|_)(temp_and_humidity_ch1|tf_ch1)(?:_|$)/', $sensor, $group) || !preg_match('/(?:^|_)humidity(?:_|$)/', $sensor)) continue;
+        $sensor = trim(strtolower(preg_replace('/[^a-zA-Z0-9]+/', '_', $row['sensor'] ?? '')), '_');
+        if (!preg_match('/(?:^|_)(temp_and_humidity_ch1|tf_ch1)(?:_|$)/', $sensor, $group) || !preg_match('/(?:^|_)humidity$/', $sensor)) continue;
         $value = str_replace(',', '.', (string) ($row['value'] ?? ''));
         $at = (int) ($row['time'] ?? 0);
         if (is_numeric($value) && is_finite((float)$value) && $value >= 0 && $value <= 100 && $at > 0 && $at <= $now + 60 && $now - $at <= 900) return ['value'=>(float)$value,'at'=>$at,'sensor'=>$group[1]];

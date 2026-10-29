@@ -43,7 +43,7 @@ def main():
   for local,remote in files:
    old=optional(f,remote);new=Path(local).read_bytes()
    if remote.endswith('/mk-public-seo.php'):assert old==new or (old is not None and hashlib.sha256(old).hexdigest()=='bcefc81e1ecb15ba454e53fddb555b91886a36f761949d209adad7e2dccd1e02'),'Live SEO changed since review'
-   elif remote.endswith('/mk-publication.php'):assert old is None or old==new or hashlib.sha256(old).hexdigest()=='d922a75c52cdf3c7f6ffdf6278d997806b48442900863cfca53937581ee1fc96','Publication module changed since review'
+   elif remote.endswith('/mk-publication.php'):assert old is None or old==new or hashlib.sha256(old).hexdigest()=='fd90541e82238825f2e46f1e606fb722ed7d0d3d99be2053afb4984560e1e17c','Publication module changed since review'
    else:assert old is None or old==new,'Publication path contains another version'
    staged.append((remote,old,new))
   ht=ROOT+'/.htaccess';old=optional(f,ht);current=old or b''
