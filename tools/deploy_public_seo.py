@@ -71,6 +71,16 @@ def clear_page_cache(ftp, directory, depth=0):
                 raise
 
 
+def verification_metadata_only(before, after):
+    """Only this route needs purging when its inventory entry is the sole change."""
+    if before is None:
+        return False
+    def remaining(code):
+        code = re.sub(rb'^\s*\* Version:.*$', b'', code, flags=re.M)
+        return re.sub(rb"^        'sprawdzalnosc' =>.*$", b'', code, flags=re.M)
+    return before != after and remaining(before) == remaining(after)
+
+
 def main():
     with ftplib.FTP(os.environ['FTP_HOST'], os.environ['FTP_USER'], os.environ['FTP_PASS'], timeout=45) as ftp:
         protection = read(ftp, BACKUPS + '/.htaccess')
@@ -78,7 +88,7 @@ def main():
         plugin_path = ROOT + '/wp-content/mu-plugins/mk-public-seo.php'
         plugin_old = optional_read(ftp, plugin_path)
         plugin_new = Path('site/mu-plugins/mk-public-seo.php').read_bytes()
-        previous = {'6265ed9a9fbeebee21581fdc9072b79f28c4e18785c42405d8ae942240fc2d07', 'a462894b3cade867c54b6b1d4561d3494544b72c246a46298dc0d428f3100115', '1d6cb92fb55f98c12c511dc4b8f4e67ea8aa3cf9708f8fd4d6cec1f33c6b22d4', 'a2b509ec8e3b197a8b5fd6090e2ce97838d5bd0d4b44d2ddb5dd8d98045e1ef0'}
+        previous = {'4103f64291f1664dccdfdd6cee00ce19e96132fffdc7602a4721ab6c49c86911', '6265ed9a9fbeebee21581fdc9072b79f28c4e18785c42405d8ae942240fc2d07', 'a462894b3cade867c54b6b1d4561d3494544b72c246a46298dc0d428f3100115', '1d6cb92fb55f98c12c511dc4b8f4e67ea8aa3cf9708f8fd4d6cec1f33c6b22d4', 'a2b509ec8e3b197a8b5fd6090e2ce97838d5bd0d4b44d2ddb5dd8d98045e1ef0'}
         assert plugin_old in (None, plugin_new) or hashlib.sha256(plugin_old).hexdigest() in previous, 'SEO module changed since review'
         app_path = THEME + '/assets/app.js'
         app_old = read(ftp, app_path)
@@ -131,7 +141,8 @@ def main():
         # A noncached request applies the draft migration and one-time native W3 flush.
         with urlopen('https://meteo-krosno.pl/?mkseo_refresh=' + STAMP, timeout=40) as response:
             assert response.status == 200 and b'mk-seo-content' in response.read(), 'SEO activation failed'
-        clear_page_cache(ftp, ROOT + '/wp-content/cache/page_enhanced/meteo-krosno.pl')
+        scope = '/sprawdzalnosc' if app_old == app_new and verification_metadata_only(plugin_old, plugin_new) else ''
+        clear_page_cache(ftp, ROOT + '/wp-content/cache/page_enhanced/meteo-krosno.pl' + scope)
         print('BACKUP', backup, flush=True)
         print('Sample status backup is retained privately in the WordPress option mkseo_sample_previous_status_v1.', flush=True)
 
