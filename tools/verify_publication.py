@@ -27,6 +27,6 @@ with urlopen('https://meteo-krosno.pl/post-sitemap.xml',timeout=35) as r:
 with urlopen('https://meteo-krosno.pl/?mk_api=live&publication_check=1',timeout=45) as r:data=json.load(r)
 station=next(s for s in data['stations'] if s['id']=='lesniowka')
 assert isinstance(station.get('humidity'),(float,int)) and 0<=station['humidity']<=100,'Missing actual Lesniowka humidity'
-assert station['timestamps']['humidity'] and station.get('humiditySensor')=='tf_ch1','Humidity is not from the selected sensor'
+assert station['timestamps']['humidity'] and station.get('humiditySensor') in ['tf_ch1','temp_and_humidity_ch1'],'Humidity is not from the selected sensor'
 print('LIVE_API_HUMIDITY',station['humidity'],'timestamp',station['timestamps']['humidity'],flush=True)
 print('Public publication checks passed.',flush=True)
