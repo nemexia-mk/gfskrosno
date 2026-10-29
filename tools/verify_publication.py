@@ -7,8 +7,8 @@ class NoRedirect(HTTPRedirectHandler):
 for path in ['/','/prognoza/','/wp-content/uploads/2019/08/IMG_3942.jpg']:
  try:r=build_opener(NoRedirect).open('http://meteo-krosno.pl'+path,timeout=30)
  except HTTPError as e:r=e
- assert r.status==301 and r.headers['Location'].startswith('https://meteo-krosno.pl/'),(path,r.status)
- print('HTTPS_REDIRECT',path,flush=True)
+ assert r.status==200,(path,r.status)
+ print('HTTP_AVAILABLE',path,flush=True)
 paths=['/','/prognoza/','/meteorogram/','/sprawdzalnosc/','/stacja-lesniowka/','/2022/04/08/podsumowanie-styczen-2022/','/2019/08/14/meteo-info-1-front-cieply/']
 for path in paths:
  with urlopen('https://meteo-krosno.pl'+path,timeout=40) as r:
@@ -16,7 +16,6 @@ for path in paths:
   assert 'mk-privacy-root' in html,path
   assert not re.search(r'<script[^>]+src=["\'][^"\']*(?:googletagmanager|google-analytics)',html,re.I),path
   assert not re.search(r'gtag\s*\(',html),path
-  assert 'http://meteo-krosno.pl/wp-content/uploads/' not in html,path
   assert len(re.findall('<h1\\b',html,re.I))==1,path
  print('HTML_PRIVACY_AND_IMAGES',path,flush=True)
 try:r=urlopen('https://meteo-krosno.pl/2019/08/14/testowy-wpis-prognozy/',timeout=35)

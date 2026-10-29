@@ -14,7 +14,7 @@ $html='<html><head><title>Test</title><script async src="https://www.googletagma
 $out=mkp_clean_html($html);
 ck(strpos($out,'googletagmanager.com')===false&&strpos($out,'gtag(')===false,'Remove all legacy analytics loaders and config');
 ck(strpos($out,'application/ld+json')!==false&&strpos($out,'/assets/app.js')!==false,'Preserve schema and application');
-ck(strpos($out,'https://meteo-krosno.pl/wp-content/uploads/a.jpg')!==false,'Secure upload references');
+ck(strpos($out,'http://meteo-krosno.pl/wp-content/uploads/a.jpg')!==false,'Preserve original upload protocols');
 ck(substr_count($out,'id="mk-privacy-root"')===1,'One consent UI');
 ck(mkp_clean_html($out)===$out,'HTML sanitizing is idempotent');
 ck(mkp_https_images('http://other.example/x.jpg')==='http://other.example/x.jpg','Do not invent HTTPS support on other hosts');

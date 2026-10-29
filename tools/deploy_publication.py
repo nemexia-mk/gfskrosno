@@ -43,13 +43,15 @@ def main():
   for local,remote in files:
    old=optional(f,remote);new=Path(local).read_bytes()
    if remote.endswith('/mk-public-seo.php'):assert old==new or (old is not None and hashlib.sha256(old).hexdigest()=='bcefc81e1ecb15ba454e53fddb555b91886a36f761949d209adad7e2dccd1e02'),'Live SEO changed since review'
-   elif remote.endswith('/mk-publication.php'):assert old is None or old==new or hashlib.sha256(old).hexdigest()=='fd90541e82238825f2e46f1e606fb722ed7d0d3d99be2053afb4984560e1e17c','Publication module changed since review'
+   elif remote.endswith('/mk-publication.php'):assert old is None or old==new or hashlib.sha256(old).hexdigest()in {'fd90541e82238825f2e46f1e606fb722ed7d0d3d99be2053afb4984560e1e17c','de6e53da850d112c2cead7b95689081c87f4b760dcc59b113d676a550da37c11'},'Publication module changed since review'
    else:assert old is None or old==new,'Publication path contains another version'
    staged.append((remote,old,new))
   ht=ROOT+'/.htaccess';old=optional(f,ht);current=old or b''
-  if b'# BEGIN MK HTTPS 20261029' in current:assert HTTPS_RULES in current;new=current
-  else:new=HTTPS_RULES+b'\n'+current
-  staged.append((ht,old,new))
+  if b'# BEGIN MK HTTPS 20261029' in current:
+   assert HTTPS_RULES in current, 'HTTPS block differs; preserve unknown rules'
+   new=current.replace(HTTPS_RULES+b'\n',b'',1) if HTTPS_RULES+b'\n' in current else current.replace(HTTPS_RULES,b'',1)
+  else:new=current
+  staged.insert(0,(ht,old,new))
   backup=BACKUPS+'/publication-'+STAMP;f.mkd(backup)
   manifest=[]
   for i,(p,old,new) in enumerate(staged):
@@ -72,6 +74,7 @@ def main():
   with urlopen('https://meteo-krosno.pl/?mk_api=publication-status&activate='+STAMP,timeout=70) as r:status=json.load(r)
   assert status['migrationComplete'] and status['testRemoved'] and not status['oldImageReferencesRemaining'],status
   assert status['privacyPublished'] or status['privacyDraftReady'],status
+  assert status.get('protocolRollback'), 'Protocol rollback did not complete'
   assert status['cacheFlushed'],'WordPress cache flush did not run; stop for cache review'
   print('CONTENT_CHECKS',json.dumps(status),flush=True)
   print('PRIVATE_BACKUP_CREATED',flush=True)

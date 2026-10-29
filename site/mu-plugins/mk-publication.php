@@ -10,8 +10,8 @@ const MKP_ADMIN_NAME = '';
 const MKP_CONTACT_EMAIL = '';
 function mkp_privacy_ready() { return MKP_ADMIN_NAME !== '' && is_email(MKP_CONTACT_EMAIL); }
 function mkp_https_images($content) {
-    // Only this site's uploads. External image protocols need separate verification.
-    return preg_replace('~http://(?:www\.)?meteo-krosno\.pl/wp-content/uploads/~i', 'https://meteo-krosno.pl/wp-content/uploads/', $content);
+    // Preserve the original HTTP/HTTPS protocols requested by the operator.
+    return $content;
 }
 add_filter('the_content', 'mkp_https_images', 999);
 add_filter('wp_get_attachment_url', 'mkp_https_images', 999);
@@ -47,6 +47,36 @@ add_action('init', function () {
     update_option('mkp_backup_' . MKP_VERSION, $backup, false);
     update_option('mkp_migrated_' . MKP_VERSION, 1, false);
 }, 21);
+add_action('init', function () {
+    if (get_option('mkp_protocol_rollback_20261029')) return;
+    global $wpdb;
+    $names = $wpdb->get_col("SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE 'mkp_backup_20261029%' ORDER BY option_id ASC");
+    $originals = [];
+    foreach ($names as $name) {
+        $backup = get_option($name, []);
+        foreach (($backup['images'] ?? []) as $id => $content) {
+            if (!isset($originals[$id])) $originals[$id] = $content;
+        }
+    }
+    foreach ($originals as $id => $original) {
+        $post = get_post($id);
+        if (!$post) continue;
+        preg_match_all('~http://(?:www\.)?meteo-krosno\.pl/wp-content/uploads/[^\s"\'<>]+~i', $original, $matches);
+        $content = $post->post_content;
+        foreach (array_unique($matches[0]) as $url) {
+            $converted = preg_replace('~^http://(?:www\.)?meteo-krosno\.pl/~i', 'https://meteo-krosno.pl/', $url);
+            $content = str_replace($converted, $url, $content);
+        }
+        if ($content === $post->post_content) continue;
+        $saved = get_option('mkp_protocol_rollback_backup_20261029', []);
+        if (!isset($saved[$id])) { $saved[$id] = $post->post_content; update_option('mkp_protocol_rollback_backup_20261029', $saved, false); }
+        wp_save_post_revision($id);
+        if (is_wp_error(wp_update_post(['ID'=>$id, 'post_content'=>wp_slash($content)], true))) return;
+    }
+    if (function_exists('w3tc_flush_all')) w3tc_flush_all();
+    update_option('mkp_protocol_rollback_20261029', 1, false);
+}, 23);
+
 add_action('init', function () {
     $key = 'mkp_policy_' . MKP_VERSION . (mkp_privacy_ready() ? '_ready' : '_draft');
     if (get_option($key)) return;
@@ -146,5 +176,5 @@ add_action('template_redirect', function () {
     $policy=get_page_by_path('polityka-prywatnosci',OBJECT,'page');
     $remaining=false;
     foreach(get_posts(['post_type'=>['post','page'],'post_status'=>'publish','posts_per_page'=>-1]) as $post) if(mkp_https_images($post->post_content)!==$post->post_content){$remaining=true;break;}
-    echo wp_json_encode(['migrationComplete'=>(bool)get_option('mkp_migrated_'.MKP_VERSION),'testRemoved'=>!$test||$test->post_status==='trash','oldImageReferencesRemaining'=>$remaining,'cacheFlushed'=>(bool)get_option('mkp_cache_flushed_'.MKP_VERSION),'privacyPublished'=>$policy&&$policy->post_status==='publish','privacyDraftReady'=>$policy&&$policy->post_status==='draft','analyticsEnabled'=>mkp_privacy_ready()]);exit;
+    echo wp_json_encode(['protocolRollback'=>(bool)get_option('mkp_protocol_rollback_20261029'),'migrationComplete'=>(bool)get_option('mkp_migrated_'.MKP_VERSION),'testRemoved'=>!$test||$test->post_status==='trash','oldImageReferencesRemaining'=>$remaining,'cacheFlushed'=>(bool)get_option('mkp_cache_flushed_'.MKP_VERSION),'privacyPublished'=>$policy&&$policy->post_status==='publish','privacyDraftReady'=>$policy&&$policy->post_status==='draft','analyticsEnabled'=>mkp_privacy_ready()]);exit;
 },-2500);
