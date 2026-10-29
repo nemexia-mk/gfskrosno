@@ -13,7 +13,7 @@ ROOT = '/meteo-krosno.pl/wp-content'
 THEME = ROOT + '/themes/meteo-krosno-modern'
 BACKUPS = THEME + '/cache/weather-backups'
 STAMP = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ') + '-' + uuid4().hex[:8]
-EXPECTED_APP = 'c5fbba99bf25478b497c99516243d5bcfe530745ef94bc3e5ccffd634ac51c6e'
+EXPECTED_APP = '6f787738f3161e8739d042199227a0c7247138999e5b1dfc6a68d8db776a7ea7'
 
 
 def read(ftp, path):
@@ -50,6 +50,7 @@ def main():
         staged = []
         for local, remote in [
             ('site/mu-plugins/mk-gfs-rain-verification.php', ROOT + '/mu-plugins/mk-gfs-rain-verification.php'),
+            ('site/mu-plugins/mk-gfs-imgw-verification.php', ROOT + '/mu-plugins/mk-gfs-imgw-verification.php'),
             ('site/app.js', THEME + '/assets/app.js'),
         ]:
             old = optional_read(ftp, remote)
@@ -57,7 +58,7 @@ def main():
             if remote.endswith('/app.js'):
                 assert old == new or (old is not None and hashlib.sha256(old).hexdigest() == EXPECTED_APP), 'Live frontend changed since review'
             else:
-                assert old is None or old == new or hashlib.sha256(old).hexdigest() == 'd86fd19d694c2646f8c4b1420076b9413cfd5b21aca39c7e4f59247a0738103a', 'Rain plugin changed since review'
+                assert old is None or old == new, 'Verification plugin changed since review'
             staged.append((remote, old, new))
         backup = BACKUPS + '/rain-' + STAMP
         ftp.mkd(backup)
@@ -84,9 +85,18 @@ def main():
                     data = json.load(response)
                     assert data['metric'] == 'rain' and data['station'] == station and data['intervalHours'] == 6
                     assert len(data['stats']) == 3 and isinstance(data['pairs'], list)
-            with urlopen('https://meteo-krosno.pl/?mk_api=verification&rain_check=' + STAMP, timeout=50) as response:
+            with urlopen('https://meteo-krosno.pl/?mk_api=verification&station=turaszowka&rain_check=' + STAMP, timeout=50) as response:
                 data = json.load(response)
                 assert response.status == 200 and 'stats' in data and 'pairs' in data and data.get('metric') != 'rain'
+            for metric in ['temp', 'rain']:
+                with urlopen('https://meteo-krosno.pl/?mk_api=verification&metric=' + metric + '&rain_check=' + STAMP, timeout=50) as response:
+                    data = json.load(response)
+                    assert response.status == 200 and data['station'] == 'imgw' and data['aggregation'] == 'daily' and data['metric'] == metric
+                    assert len(data['stats']) == 3
+                    assert not any(key in data for key in ['pairs', 'started', 'days', 'observations', 'runs'])
+                    assert all('n' not in stat for stat in data['stats'])
+                    if metric == 'temp':
+                        assert data['available'], 'Original temperature forecasts were not matched to IMGW observations'
         except Exception:
             for path, old in reversed(changed):
                 if old is None:

@@ -1,9 +1,9 @@
-name: Publish GFS precipitation verification
+name: Publish GFS and IMGW verification
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['.github/workflows/gfs-rain-verification.yml', 'site/mu-plugins/mk-gfs-rain-verification.php', 'tools/deploy_gfs_rain.py', 'tests/test_gfs_rain_verification.php', 'tests/test_gfs_rain_ui.cjs']
+    paths: ['.github/workflows/gfs-rain-verification.yml', 'site/mu-plugins/mk-gfs-rain-verification.php', 'site/mu-plugins/mk-gfs-imgw-verification.php', 'tools/deploy_gfs_rain.py', 'tests/test_gfs_imgw_verification.php', 'tests/test_gfs_rain_verification.php', 'tests/test_gfs_rain_ui.cjs']
 permissions:
   contents: read
 concurrency:
@@ -18,6 +18,8 @@ jobs:
       - name: Verify rain periods, scores, collection and frontend regressions
         run: |
           php -l site/mu-plugins/mk-gfs-rain-verification.php
+          php -l site/mu-plugins/mk-gfs-imgw-verification.php
+          php tests/test_gfs_imgw_verification.php
           php tests/test_gfs_rain_verification.php
           node --check site/app.js
           node tests/test_gfs_rain_ui.cjs
