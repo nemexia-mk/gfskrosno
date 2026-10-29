@@ -52,7 +52,7 @@ foreach (['1985', '2026', 'pairs', 'started', 'observations', '"n"', 'days', '.c
 $options = [];
 $bad = $data; $bad['source']['fallback'] = true;
 mkiv_archive($bad, $saved); check(!$options, 'Do not archive substitute forecasts');
-$bad = $data; $bad['rows'][30]['rain'] = null;
+$bad = $data; $bad['rows'][31]['rain'] = null;
 mkiv_archive($bad, $saved);
 check(!isset(get_option('mkiv_forecasts_2026')['2026-10-20']['rain']), 'A missing hour invalidates a rain day');
 $options = [];
