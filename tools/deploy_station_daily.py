@@ -46,7 +46,8 @@ def patch_receiver(old,suffix):
  pos=s.index('<?php')+len('<?php')
  strict=re.match(r'\s*declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;',s[pos:])
  if strict:pos+=strict.end()
- hook="\n// MK daily CSV hook v1\nrequire_once __DIR__.'/mk-daily-csv.php';\nmksd_register_monthly_mirror(__DIR__, '"+suffix+"');\n"
+ root="__DIR__" if suffix=='root' else "dirname(__DIR__)"
+ hook="\n// MK daily CSV hook v1\nrequire_once __DIR__.'/mk-daily-csv.php';\nmksd_register_monthly_mirror("+root+", 'turaszowka');\nmksd_register_monthly_mirror("+root+".'/lesniowka', 'lesniowka');\n"
  s=s[:pos]+hook+s[pos:];return s.encode()
 
 def main():
@@ -71,10 +72,19 @@ def main():
   stage(ROOT+'/.htaccess',transform=undo_redirect)
   stage(PLUGIN+'/daily-cache.php',new=module)
   stage(PLUGIN+'/data.php',transform=patch_reader)
-  for suffix,sub in [('turaszowka',''),('lesniowka','/lesniowka')]:
+  receiver_count=0
+  for sub in ['', '/lesniowka']:
    directory='/stacja.meteo-krosno.pl/pwsWD/ecowitt'+sub
    stage(directory+'/mk-daily-csv.php',new=module)
-   stage(directory+'/index.php',transform=lambda b,suffix=suffix:patch_receiver(b,suffix))
+   # Discover existing receiver entry points without printing private source.
+   for name in f.nlst(directory):
+    base=PurePosixPath(name).name
+    if not base.endswith('.php') or re.search(r'(test|backup|old|copy|bak|mk-daily)',base,re.I):continue
+    path=directory+'/'+base;source=read(f,path)
+    if b'PASSKEY' not in source or b'$_POST' not in source:continue
+    stage(path,transform=lambda b,kind='child' if sub else 'root':patch_receiver(b,kind))
+    receiver_count+=1
+  assert receiver_count, 'No station receiver identified; no files changed'
   backup=BACKUPS+'/station-daily-'+STAMP;f.mkd(backup)
   for i,(p,old,new) in enumerate(staged):
    if old is not None:write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)
