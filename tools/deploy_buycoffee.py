@@ -1,5 +1,5 @@
 """Publish only the BuyCoffee section; preserve SEO, station code and redirects."""
-import ftplib,io,os,json,subprocess
+import ftplib,io,os,json,subprocess,hashlib
 from pathlib import Path,PurePosixPath
 from datetime import datetime,timezone
 from uuid import uuid4
@@ -49,9 +49,11 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
  # Assets first, PHP entry point last: no half-installed module can activate.
  for name in ['mk-buycoffee.php']:
   p=ROOT+'/mu-plugins/'+name;old=optional(f,p);new=Path('site/mu-plugins/'+name).read_bytes()
-  assert old is None or old==new,'New loading module path already occupied; stop'
+  assert old is None or old==new or hashlib.sha256(old).hexdigest()=='e6235ead9d92260bb8d919733eca1c1d3fd3380f377c6fc60b64cc40500a64ac','BuyCoffee module changed since review; stop'
   staged.append((p,old,new))
  backup=BACKUPS+'/buycoffee-'+STAMP;f.mkd(backup)
+ for i,(p,old,new) in enumerate(staged):
+  if old is not None:write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)
  write(f,backup+'/manifest.json',json.dumps([{'path':p,'previouslyExisted':old is not None} for p,old,new in staged]).encode())
  changed=[]
  try:

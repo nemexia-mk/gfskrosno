@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — wesprzyj serwis
- * Version: 20261030a
+ * Version: 20261030b
  */
 defined('ABSPATH') || exit;
 function mkcoffee_html($html) {
@@ -12,9 +12,9 @@ function mkcoffee_html($html) {
 .mk-coffee-copy{flex:1;min-width:0}.mk-coffee h2{font-size:clamp(21px,3vw,28px);line-height:1.3;margin:0 0 12px}.mk-coffee p{font-size:15px;line-height:1.65;color:#b3d0dd;margin:0 0 18px}
 .mk-coffee-options{display:flex;gap:10px;flex-wrap:wrap}.mk-coffee-option{display:flex;align-items:center;justify-content:center;gap:10px;min-height:48px;min-width:108px;padding:10px 16px;background:#20483f;border:1px solid #4cb99e;border-radius:14px;color:#d9fff3!important;text-decoration:none;font-weight:700;box-sizing:border-box}
 .mk-coffee-option:hover{background:#2b5b50}.mk-coffee a:focus-visible{outline:3px solid #86e6cc;outline-offset:4px}.mk-coffee-option svg{width:25px;height:25px;flex:none}
-.mk-coffee-qr{flex:none;text-align:center;color:#b3d0dd;text-decoration:none;font-size:12px}.mk-coffee-qr img{display:block;width:144px;height:144px;object-fit:contain;padding:8px;background:#fff;border-radius:14px;box-sizing:border-box;margin:0 auto 8px}
+.mk-coffee-qr{flex:none;text-align:center;color:#b3d0dd;text-decoration:none;font-size:12px}.mk-coffee-qr img{display:block;width:180px;height:auto;object-fit:contain;padding:0;background:transparent;border-radius:14px;box-sizing:border-box;margin:0 auto 8px}
 .mk-coffee small{display:block;color:#91aebc;margin-top:14px;line-height:1.5;font-size:12px}
-@media(max-width:600px){.mk-coffee-box{flex-direction:column;gap:22px;padding:24px 18px}.mk-coffee-copy{width:100%}.mk-coffee-options{gap:8px}.mk-coffee-option{flex:1;min-width:0;padding:10px 8px}.mk-coffee-qr img{width:128px;height:128px}}
+@media(max-width:600px){.mk-coffee-box{flex-direction:column;gap:22px;padding:24px 18px}.mk-coffee-copy{width:100%}.mk-coffee-options{gap:8px}.mk-coffee-option{flex:1;min-width:0;padding:10px 8px}.mk-coffee-qr img{width:160px;height:auto}}
 </style>
 CSS;
  $html=preg_replace_callback('~</head>~i',fn($m)=>$style.$m[0],$html,1);
@@ -22,7 +22,7 @@ CSS;
  foreach(['small'=>10,'medium'=>20,'large'=>35] as $size=>$price){
   $card.='<a class="mk-coffee-option" href="https://buycoffee.to/meteokrosno?coffeeSize='.$size.'" target="_blank" rel="noopener noreferrer" aria-label="Wesprzyj Meteo Krosno kwotą '.$price.' zł przez BuyCoffee"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 12h16v8a7 7 0 0 1-7 7h-2a7 7 0 0 1-7-7zm16 1h2a4 4 0 0 1 0 8h-2M4 28h24M11 8V4m5 4V2m5 6V4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>'.$price.' zł</span></a>';
  }
- $card.='</div><small>Dobrowolne wsparcie przez BuyCoffee. Link otworzy się w nowej karcie.</small></div><a class="mk-coffee-qr" href="https://buycoffee.to/meteokrosno" target="_blank" rel="noopener noreferrer"><img src="/wp-content/themes/meteo-krosno-modern/assets/qr-buycoffee.png" width="144" height="144" loading="lazy" decoding="async" alt="Kod QR do wsparcia Meteo Krosno w BuyCoffee"><span>Zeskanuj i postaw kawę</span></a></div></aside>';
+ $card.='</div><small>Dobrowolne wsparcie przez BuyCoffee. Link otworzy się w nowej karcie.</small></div><a class="mk-coffee-qr" href="https://buycoffee.to/meteokrosno" target="_blank" rel="noopener noreferrer"><img src="/wp-content/themes/meteo-krosno-modern/assets/qr-buycoffee.png" width="180" height="229" loading="lazy" decoding="async" alt="Kod QR do wsparcia Meteo Krosno w BuyCoffee"><span>Zeskanuj i postaw kawę</span></a></div></aside>';
  return preg_replace_callback('~<footer\b~i',fn($m)=>$card.$m[0],$html,1);
 }
 add_action('template_redirect',function(){
