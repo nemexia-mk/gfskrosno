@@ -38,6 +38,7 @@ jobs:
           with urlopen('https://meteo-krosno.pl/',timeout=45) as r:
               h=r.read().decode()
               assert h.count('id="mk-coffee-support"')==1
+              assert h.count('class="mk-header-coffee"')==1
               assert all('coffeeSize='+s in h for s in ['small','medium','large'])
           with urlopen('https://meteo-krosno.pl/wp-content/themes/meteo-krosno-modern/assets/qr-buycoffee.png',timeout=30) as r:
               assert r.read().startswith(b'\x89PNG\r\n\x1a\n')

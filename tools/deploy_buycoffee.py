@@ -49,7 +49,7 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
  # Assets first, PHP entry point last: no half-installed module can activate.
  for name in ['mk-buycoffee.php']:
   p=ROOT+'/mu-plugins/'+name;old=optional(f,p);new=Path('site/mu-plugins/'+name).read_bytes()
-  assert old is None or old==new or hashlib.sha256(old).hexdigest()=='039bdc9548abfd42a98dd80275299334f09699224d16dffb25a0a02012e3d849' or hashlib.sha256(old).hexdigest()=='e6235ead9d92260bb8d919733eca1c1d3fd3380f377c6fc60b64cc40500a64ac','BuyCoffee module changed since review; stop'
+  assert old is None or old==new or hashlib.sha256(old).hexdigest()=='64752b6e8a1e1ba8ad916f333827c504cd64fddec69f634dae9c2571c472b0eb' or hashlib.sha256(old).hexdigest()=='039bdc9548abfd42a98dd80275299334f09699224d16dffb25a0a02012e3d849' or hashlib.sha256(old).hexdigest()=='e6235ead9d92260bb8d919733eca1c1d3fd3380f377c6fc60b64cc40500a64ac','BuyCoffee module changed since review; stop'
   staged.append((p,old,new))
  backup=BACKUPS+'/buycoffee-'+STAMP;f.mkd(backup)
  for i,(p,old,new) in enumerate(staged):
