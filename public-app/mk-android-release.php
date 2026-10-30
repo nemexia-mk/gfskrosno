@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — aplikacja Android
- * Version: 1.0.2
+ * Version: 1.0.3
  */
 defined('ABSPATH') || exit;
 function mkandroid_release(){return json_decode(file_get_contents(__DIR__.'/mk-android-release.json'),true);}
@@ -54,6 +54,6 @@ add_action('template_redirect',function(){
   remove_action('template_redirect','redirect_canonical');
  }
  ob_start('mkandroid_html');
-},-1002);
+},-2100);
 
-add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_102',time(),'','no'))w3tc_flush_all();},90);
+add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_103',time(),'','no'))w3tc_flush_all();},90);
