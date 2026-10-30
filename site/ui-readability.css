@@ -1,7 +1,0 @@
-/* Meteo Krosno: czytelność ostrzeżeń IMGW, 27.10.2026 */
-#mk-imgw-warnings article{background:#fff7df!important;color:#192b38!important;border-radius:8px;line-height:1.65}
-#mk-imgw-warnings article strong,#mk-imgw-warnings article p{color:#192b38!important;opacity:1!important}
-#mk-imgw-warnings article strong{display:block;font-size:1.05rem}
-#mk-current-strip{padding:20px 24px}
-#mk-current-strip .ov-section-label{margin-bottom:10px}
-#mk-current-strip a:focus-visible{outline:3px solid #8de2c3;outline-offset:5px}

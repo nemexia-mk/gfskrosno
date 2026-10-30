@@ -1,0 +1,29 @@
+name: Android local build tools
+on:
+  push:
+    branches: [android-csv-build-tools]
+    paths: ['.github/workflows/android-local-tools.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  tools:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - run: |
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+          mkdir -p tools/platforms tools/build-tools
+          cp -a "$ANDROID_HOME/platforms/android-35" tools/platforms/
+          cp -a "$ANDROID_HOME/build-tools/35.0.0" tools/build-tools/
+          curl --fail --location --retry 2 https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o tools/json-test.jar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-35-local-tools
+          path: tools/
+          retention-days: 1
