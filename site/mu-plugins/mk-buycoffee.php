@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — wesprzyj serwis
- * Version: 20261030b
+ * Version: 20261030c
  */
 defined('ABSPATH') || exit;
 function mkcoffee_html($html) {
@@ -9,7 +9,7 @@ function mkcoffee_html($html) {
 <style id="mk-coffee-style">
 .mk-coffee{max-width:1180px;margin:36px auto;padding:0 20px;box-sizing:border-box;color:#edf7fb;font-family:inherit}
 .mk-coffee-box{display:flex;align-items:center;gap:32px;background:#102631;border:1px solid #2c5360;border-radius:24px;padding:28px;box-sizing:border-box}
-.mk-coffee-copy{flex:1;min-width:0}.mk-coffee h2{font-size:clamp(21px,3vw,28px);line-height:1.3;margin:0 0 12px}.mk-coffee p{font-size:15px;line-height:1.65;color:#b3d0dd;margin:0 0 18px}
+.mk-coffee-copy{flex:1;min-width:0}.mk-coffee h2{color:#edf7fb!important;font-size:clamp(21px,3vw,28px);line-height:1.3;margin:0 0 12px}.mk-coffee p{font-size:15px;line-height:1.65;color:#b3d0dd;margin:0 0 18px}
 .mk-coffee-options{display:flex;gap:10px;flex-wrap:wrap}.mk-coffee-option{display:flex;align-items:center;justify-content:center;gap:10px;min-height:48px;min-width:108px;padding:10px 16px;background:#20483f;border:1px solid #4cb99e;border-radius:14px;color:#d9fff3!important;text-decoration:none;font-weight:700;box-sizing:border-box}
 .mk-coffee-option:hover{background:#2b5b50}.mk-coffee a:focus-visible{outline:3px solid #86e6cc;outline-offset:4px}.mk-coffee-option svg{width:25px;height:25px;flex:none}
 .mk-coffee-qr{flex:none;text-align:center;color:#b3d0dd;text-decoration:none;font-size:12px}.mk-coffee-qr img{display:block;width:180px;height:auto;object-fit:contain;padding:0;background:transparent;border-radius:14px;box-sizing:border-box;margin:0 auto 8px}
