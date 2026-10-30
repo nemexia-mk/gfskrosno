@@ -1,0 +1,19 @@
+name: Check Android CSV source
+on:
+  push:
+    branches: [android-csv-build-tools]
+    paths: ['.github/workflows/android-csv-check.yml', 'check-station-csv.py']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: python check-station-csv.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: station-csv-fixtures
+          path: fixtures/
+          retention-days: 1
