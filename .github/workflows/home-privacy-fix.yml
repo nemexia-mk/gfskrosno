@@ -6,7 +6,7 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: meteo-krosno-public-seo-publish
+  group: meteo-krosno-home-privacy-repair
   cancel-in-progress: false
 jobs:
   fix:
