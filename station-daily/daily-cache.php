@@ -75,6 +75,7 @@ function mksd_daily_record($data, $directory, $suffix, $now = null) {
     } finally { flock($lock,LOCK_UN); fclose($lock); }
 }
 function mksd_cache_path($id,$range,$date) {
+    if($range!=='day')$date=''; // Ignore unused date parameters; keep cache storage bounded.
     $base=rtrim(sys_get_temp_dir(),'/').'/mk-daily-reader-'.substr(hash('sha256',ABSPATH),0,12);
     if(!is_dir($base) && !@mkdir($base,0700,true) && !is_dir($base)) return null;
     return $base.'/'.hash('sha256','v1|'.$id.'|'.$range.'|'.$date).'.json';

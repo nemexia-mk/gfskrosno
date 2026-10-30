@@ -52,15 +52,19 @@ def patch_receiver(old,suffix):
 
 def patch_sources(old):
  s=old.decode('utf-8')
- if '// MK small CSV direct refresh v1' in s:return old
- needle=" if(defined('MKS_STANDALONE')){"
- assert needle in s,'Standalone source branch differs; stop'
- insert=""" if(defined('MKS_STANDALONE')){
+ if '// MK small CSV direct refresh v1' not in s:
+  needle=" if(defined('MKS_STANDALONE')){"
+  assert needle in s,'Standalone source branch differs; stop'
+  insert=r""" if(defined('MKS_STANDALONE')){
   // MK small CSV direct refresh v1: no WP-Cron or page visit is needed for live data.
   require_once __DIR__.'/daily-cache.php';
   \mksd_refresh_small_csv($url,$path,$ttl);
 """
- s=s.replace(needle,insert,1)
+  s=s.replace(needle,insert,1)
+ if '// MK standalone cache directory v1' not in s:
+  needle=" if(!is_dir($dir)){if(defined('MKS_STANDALONE')||!wp_mkdir_p($dir))return null;}"
+  assert needle in s,'Cache directory branch differs; stop'
+  s=s.replace(needle," // MK standalone cache directory v1\n if(!is_dir($dir)){if(defined('MKS_STANDALONE')){if(!@mkdir($dir,0700,true)&&!is_dir($dir))return null;}elseif(!wp_mkdir_p($dir))return null;}",1)
  return s.encode()
 
 def main():

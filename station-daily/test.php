@@ -41,4 +41,5 @@ ck(mksd_refresh_small_csv('http://stacja.meteo-krosno.pl/pwsWD/ecowitt/dzis_tura
 ck(!mksd_refresh_small_csv('http://other.example/dzis_turaszowka.csv',$small,30,fn($u)=>$smallBody,$nowLive),'No arbitrary remote fetches');
 $badPath=$dir.'/bad-cache';ck(!mksd_refresh_small_csv('http://stacja.meteo-krosno.pl/pwsWD/ecowitt/dzis_turaszowka.csv',$badPath,30,fn($u)=>'<html>Error</html>',$nowLive),'Error page is never cached as weather');
 ck(!is_file($badPath),'Invalid fetch cannot replace prior weather');
+ck(mksd_cache_path('lesniowka','6h','unused-one')===mksd_cache_path('lesniowka','6h','unused-two'),'Ignored date parameters share one current-period cache');
 echo "Daily CSV: rotation, timestamps, duplicate uploads, out-of-order uploads, secret exclusion, archive preservation, cache and corrupt rows passed.\n";
