@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — aplikacja Android
- * Version: 1.0.1
+ * Version: 1.0.2
  */
 defined('ABSPATH') || exit;
 function mkandroid_release(){return json_decode(file_get_contents(__DIR__.'/mk-android-release.json'),true);}
@@ -22,6 +22,7 @@ function mkandroid_page(){
 }
 function mkandroid_html($html){
  if(stripos($html,'<html')===false||strpos($html,'id="mk-android-style"')!==false)return $html;
+ $html=str_replace('consent-20261029.js','consent-20261029.js?v=20261030-click',$html);
  $style='<style id="mk-android-style">'.file_get_contents(__DIR__.'/mk-android-release.css').'</style>';
  $html=preg_replace_callback('~</head>~i',fn($m)=>$style.$m[0],$html,1);
  // Link appears in both the desktop and mobile About menus.
@@ -47,7 +48,7 @@ JS;
  return $html;
 }
 add_action('template_redirect',function(){
- if(is_admin()||is_feed()||isset($_GET['mk_api'])||(defined('REST_REQUEST')&&REST_REQUEST))return;
+ if(is_admin()||is_feed()||(function_exists('mkseo_internal')&&mkseo_internal())||isset($_GET['mk_api'])||(defined('REST_REQUEST')&&REST_REQUEST))return;
  if(mkandroid_path()==='aplikacja'){
   global $wp_query;$wp_query->is_404=false;status_header(200);
   remove_action('template_redirect','redirect_canonical');
@@ -55,4 +56,4 @@ add_action('template_redirect',function(){
  ob_start('mkandroid_html');
 },-1002);
 
-add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_101',time(),'','no'))w3tc_flush_all();},90);
+add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_102',time(),'','no'))w3tc_flush_all();},90);

@@ -20,7 +20,7 @@
  }
  function close(){banner.hidden=true;lastFocus?.focus();}
  function deny(){save(false);window['ga-disable-'+ID]=true;clearCookies();close();if(loaded)location.reload();}
- root.addEventListener('click',e=>{
+ document.addEventListener('click',e=>{
   if(e.target.closest('[data-mk-consent-open]')){lastFocus=e.target;banner.hidden=false;banner.querySelector('[data-mk-consent-deny]').focus();}
   if(e.target.closest('[data-mk-consent-deny]'))deny();
   if(e.target.closest('[data-mk-consent-accept]')&&ready){save(true);enable();close();}

@@ -29,7 +29,7 @@ with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PA
  files=[(apk,ROOT+r['url'])]
  for name in ['mk-android-release.css','mk-android-release.json','mk-android-release.php']:files.append((Path('public-app')/name,ROOT+'/wp-content/mu-plugins/'+name))
  for local,p in files:
-  old=optional(f,p);new=local.read_bytes();assert old is None or old==new or (p.endswith('/mk-android-release.php') and hashlib.sha256(old).hexdigest()=='97398ab90866f9a5acd458dd413cc113b563d7747eb363237add1af159d7f1d0'),'Release path already occupied; no files changed';staged.append((p,old,new))
+  old=optional(f,p);new=local.read_bytes();assert old is None or old==new or (p.endswith('/mk-android-release.php') and hashlib.sha256(old).hexdigest()=='15c0a2cf19d10709141a54109ebcad45b8120a4b7a40ccaadfec1bd9fde27776'),'Release path already occupied; no files changed';staged.append((p,old,new))
  backup=BACKUPS+'/android-release-'+STAMP;f.mkd(backup)
  for i,(p,old,new) in enumerate(staged):
   if old is not None:write(f,backup+'/'+str(i)+'-'+PurePosixPath(p).name,old)

@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — wesprzyj serwis
- * Version: 20261030d
+ * Version: 20261030e
  */
 defined('ABSPATH') || exit;
 function mkcoffee_html($html) {
@@ -33,6 +33,6 @@ CSS;
  return preg_replace_callback('~<footer\b~i',fn($m)=>$card.$m[0],$html,1);
 }
 add_action('template_redirect',function(){
- if(is_admin()||is_feed()||isset($_GET['mk_api']))return;
+ if(is_admin()||is_feed()||(function_exists('mkseo_internal')&&mkseo_internal())||isset($_GET['mk_api']))return;
  ob_start('mkcoffee_html');
 },-1001);
