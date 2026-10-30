@@ -1,0 +1,12 @@
+#mk-home-loader{display:none}
+html.mk-home-pending #main{display:none}
+html.mk-home-pending #mk-home-loader{display:grid;place-items:center;min-height:clamp(340px,62svh,640px);padding:32px 20px;box-sizing:border-box;color:#edf7fb}
+.mk-load-card{text-align:center;width:min(100%,480px);padding:42px 24px;border:1px solid #244653;border-radius:24px;background:#102631;box-sizing:border-box;box-shadow:0 16px 48px #00101b33;font-family:inherit}
+.mk-load-brand{font-size:clamp(23px,4vw,30px);font-weight:750;margin:20px 0 8px;letter-spacing:.02em}
+.mk-load-card p[role=status]{font-size:17px;margin:8px 0;color:#b4d9e7}
+.mk-load-card .mk-load-note{font-size:13px;color:#94b4c3;margin:14px 0 0}
+.mk-load-orbit{display:inline-block;width:48px;height:48px;border:3px solid #315362;border-top-color:#56ddbd;border-right-color:#56ddbd;border-radius:50%;animation:mk-load-spin 1s linear infinite}
+#mk-load-basic{display:inline-block;margin-top:24px;padding:9px 14px;background:transparent;border:1px solid #426471;border-radius:10px;color:#c2e7ee;font:inherit;font-size:13px;cursor:pointer}
+#mk-load-basic:hover,#mk-load-basic:focus-visible{border-color:#56ddbd;color:white;outline:2px solid #56ddbd;outline-offset:3px}
+@keyframes mk-load-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.mk-load-orbit{animation:none;border-top-color:#56ddbd}}
