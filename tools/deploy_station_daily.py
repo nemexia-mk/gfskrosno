@@ -50,6 +50,19 @@ def patch_receiver(old,suffix):
  hook="\n// MK daily CSV hook v1\nrequire_once __DIR__.'/mk-daily-csv.php';\nmksd_register_monthly_mirror("+root+", 'turaszowka');\nmksd_register_monthly_mirror("+root+".'/lesniowka', 'lesniowka');\n"
  s=s[:pos]+hook+s[pos:];return s.encode()
 
+def patch_sources(old):
+ s=old.decode('utf-8')
+ if '// MK small CSV direct refresh v1' in s:return old
+ needle=" if(defined('MKS_STANDALONE')){"
+ assert needle in s,'Standalone source branch differs; stop'
+ insert=""" if(defined('MKS_STANDALONE')){
+  // MK small CSV direct refresh v1: no WP-Cron or page visit is needed for live data.
+  require_once __DIR__.'/daily-cache.php';
+  \mksd_refresh_small_csv($url,$path,$ttl);
+"""
+ s=s.replace(needle,insert,1)
+ return s.encode()
+
 def main():
  module=Path('station-daily/daily-cache.php').read_bytes();lint(module)
  with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=45) as f:
@@ -72,6 +85,7 @@ def main():
   stage(ROOT+'/.htaccess',transform=undo_redirect)
   stage(PLUGIN+'/daily-cache.php',new=module)
   stage(PLUGIN+'/data.php',transform=patch_reader)
+  stage(PLUGIN+'/sources.php',transform=patch_sources)
   receiver_count=0
   for sub in ['', '/lesniowka']:
    directory='/stacja.meteo-krosno.pl/pwsWD/ecowitt'+sub

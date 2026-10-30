@@ -36,4 +36,9 @@ $code.='$fp=fopen(__DIR__."/'. $monthLive.'_turaszowka.csv","wb");fputcsv($fp,["
 file_put_contents($child,$code);exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg($child),$output,$exit);ck($exit===0,'Receiver fixture exit');
 $mirrored=rows($mirror.'/dzis_turaszowka.csv');ck($mirrored[1][2]==='99','Only accepted saved measurements mirrored');
 ck(!str_contains(file_get_contents($mirror.'/dzis_turaszowka.csv'),'not-weather-data'),'Raw POST is never mirrored');
+$small=$dir.'/small-cache';$smallBody=file_get_contents($mirror.'/dzis_turaszowka.csv');
+ck(mksd_refresh_small_csv('http://stacja.meteo-krosno.pl/pwsWD/ecowitt/dzis_turaszowka.csv',$small,30,fn($u)=>$smallBody,$nowLive),'Small standalone CSV refresh');
+ck(!mksd_refresh_small_csv('http://other.example/dzis_turaszowka.csv',$small,30,fn($u)=>$smallBody,$nowLive),'No arbitrary remote fetches');
+$badPath=$dir.'/bad-cache';ck(!mksd_refresh_small_csv('http://stacja.meteo-krosno.pl/pwsWD/ecowitt/dzis_turaszowka.csv',$badPath,30,fn($u)=>'<html>Error</html>',$nowLive),'Error page is never cached as weather');
+ck(!is_file($badPath),'Invalid fetch cannot replace prior weather');
 echo "Daily CSV: rotation, timestamps, duplicate uploads, out-of-order uploads, secret exclusion, archive preservation, cache and corrupt rows passed.\n";

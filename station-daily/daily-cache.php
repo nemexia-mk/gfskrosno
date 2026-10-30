@@ -128,3 +128,26 @@ function mksd_register_monthly_mirror($directory,$suffix) {
         } catch(Throwable $e) {error_log('MK daily CSV mirror failed');}
     });
 }
+
+function mksd_refresh_small_csv($url,$path,$ttl,$fetcher=null,$now=null) {
+    $now=$now??time();
+    if(!preg_match('~^http://stacja\.meteo-krosno\.pl/pwsWD/ecowitt/(?:lesniowka/)?(?:dzis|ostatni)_(?:turaszowka|lesniowka)\.csv$~D',$url))return false;
+    if(is_file($path) && $now-filemtime($path)<$ttl)return true;
+    $lock=@fopen($path.'.daily-lock','c');if(!$lock||!flock($lock,LOCK_EX|LOCK_NB)){if($lock)fclose($lock);return false;}
+    try {
+        if($fetcher)$body=$fetcher($url);
+        else {
+            $context=stream_context_create(['http'=>['timeout'=>3,'follow_location'=>0,'header'=>"Cache-Control: no-cache\r\nUser-Agent: MeteoKrosno-DailyCSV/1.0\r\n"]]);
+            $body=@file_get_contents($url,false,$context,0,2097153);
+            if(!isset($http_response_header[0])||!preg_match('~^HTTP/\S+ 200\b~',$http_response_header[0]))return false;
+        }
+        if(!is_string($body)||strlen($body)>2097152||str_contains($body,"\0"))return false;
+        $fp=fopen('php://temp','w+');fwrite($fp,$body);rewind($fp);$h=fgetcsv($fp,0,';','"','');$last=null;
+        if($h!==mksd_headers()){fclose($fp);return false;}
+        while(($r=fgetcsv($fp,0,';','"',''))!==false){$ts=mksd_stamp($r[0]??null);if($ts===null||count($r)!==count($h)){fclose($fp);return false;}$last=$ts;}
+        fclose($fp);if($last===null||$last>$now+120||$now-$last>900)return false;
+        $tmp=$path.'.daily-tmp-'.bin2hex(random_bytes(5));
+        if(file_put_contents($tmp,$body,LOCK_EX)===false||!@rename($tmp,$path)){@unlink($tmp);return false;}
+        return true;
+    } finally {flock($lock,LOCK_UN);fclose($lock);}
+}
