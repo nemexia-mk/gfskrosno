@@ -26,4 +26,14 @@ ck(mksd_reader_cache('lesniowka','6h','',$dir.'/dzis_lesniowka.csv',$nowDate->mo
 // Initial installation seeds valid records, skipping a corrupt timestamp row.
 $seed=$dir.'/seed';mkdir($seed);$fp=fopen($seed.'/10_2026_turaszowka.csv','wb');fputcsv($fp,['czas_UTC','tempf','humidity'],';','"','');fputcsv($fp,["\0\0\0",'0','0'],';','"','');fputcsv($fp,['2026-10-30 09:58:00','45','90'],';','"','');fclose($fp);
 ck(mksd_daily_record($d,$seed,'turaszowka',$now),'Seed accepted');ck(count(rows($seed.'/dzis_turaszowka.csv'))===3,'Valid earlier history seeded');
+// The mirror copies only a changed, saved monthly CSV, never raw POST credentials/data.
+$mirror=$dir.'/mirror';mkdir($mirror);$nowLive=time();$utcLive=gmdate('Y-m-d H:i:s',$nowLive);$monthLive=(new DateTimeImmutable('@'.$nowLive))->setTimezone(new DateTimeZone('Europe/Warsaw'))->format('m_Y');
+$child=$mirror.'/receiver-fixture.php';
+$code="<?php\nrequire ".var_export(__DIR__.'/daily-cache.php',true).";\n";
+$code.='$_SERVER["REQUEST_METHOD"]="POST"; $_POST=["humidity"=>"1","PASSKEY"=>"not-weather-data"];' . "\n";
+$code.='mksd_register_monthly_mirror(__DIR__,"turaszowka");'."\n";
+$code.='$fp=fopen(__DIR__."/'. $monthLive.'_turaszowka.csv","wb");fputcsv($fp,["czas_UTC","tempf","humidity"],";",chr(34),"");fputcsv($fp,['.var_export($utcLive,true).',"46.4","99"],";",chr(34),"");fclose($fp);';
+file_put_contents($child,$code);exec(escapeshellarg(PHP_BINARY).' '.escapeshellarg($child),$output,$exit);ck($exit===0,'Receiver fixture exit');
+$mirrored=rows($mirror.'/dzis_turaszowka.csv');ck($mirrored[1][2]==='99','Only accepted saved measurements mirrored');
+ck(!str_contains(file_get_contents($mirror.'/dzis_turaszowka.csv'),'not-weather-data'),'Raw POST is never mirrored');
 echo "Daily CSV: rotation, timestamps, duplicate uploads, out-of-order uploads, secret exclusion, archive preservation, cache and corrupt rows passed.\n";

@@ -50,7 +50,7 @@ function mksd_daily_record($data, $directory, $suffix, $now = null) {
         if ($firstDay === null) {
             $month = $directory.'/'.$local->format('m_Y').'_'.$suffix.'.csv';
             if (($fp=@fopen($month,'rb'))) {
-                if (flock($fp,LOCK_SH)) {
+                if (flock($fp,LOCK_SH|LOCK_NB)) {
                     $h=fgetcsv($fp,0,';','"','');
                     if (is_array($h)) {
                         $h[0]=preg_replace('/^\xEF\xBB\xBF/','',$h[0]); $map=array_flip($h);
@@ -96,4 +96,35 @@ function mksd_store_reader($id,$range,$date,$now,$start,$points,$monthTemps,$sou
     $data=json_encode(['day'=>$now->format('Y-m-d'),'created'=>$now->getTimestamp(),'start'=>$start->getTimestamp(),'points'=>$points,'monthTemps'=>$monthTemps,'sources'=>$sources],JSON_INVALID_UTF8_SUBSTITUTE);
     if($data===false)return;$tmp=$path.'.tmp-'.bin2hex(random_bytes(5));
     if(file_put_contents($tmp,$data,LOCK_EX)!==false)@rename($tmp,$path);else @unlink($tmp);
+}
+
+function mksd_register_monthly_mirror($directory,$suffix) {
+    if (($_SERVER['REQUEST_METHOD']??'') !== 'POST') return;
+    $tz=new DateTimeZone('Europe/Warsaw');$now=new DateTimeImmutable('now',$tz);
+    $months=array_unique([$now->format('m_Y'),gmdate('m_Y')]);$before=[];
+    foreach($months as $month){$p=$directory.'/'.$month.'_'.$suffix.'.csv';clearstatcache(true,$p);$before[$p]=is_file($p)?[filesize($p),filemtime($p)]:null;}
+    register_shutdown_function(static function() use($directory,$suffix,$before){
+        try {
+            $latest=null;$latestStamp=null;
+            foreach($before as $path=>$state){
+                clearstatcache(true,$path);if(!is_file($path)||[filesize($path),filemtime($path)]===$state)continue;
+                $fp=@fopen($path,'rb');if(!$fp)continue;
+                if(!flock($fp,LOCK_SH|LOCK_NB)){fclose($fp);continue;}
+                $header=fgetcsv($fp,0,';','"','');
+                if(!is_array($header)){flock($fp,LOCK_UN);fclose($fp);continue;}
+                $header[0]=preg_replace('/^\xEF\xBB\xBF/','',$header[0]);$map=array_flip($header);
+                // Read only the tail after the original, authenticated logger has saved a row.
+                $offset=max(ftell($fp),filesize($path)-262144);
+                if($offset>ftell($fp)){fseek($fp,$offset);fgets($fp);}
+                while(($row=fgetcsv($fp,0,';','"',''))!==false){
+                    $ts=mksd_stamp($row[$map['czas_UTC']??-1]??null);if($ts===null||($latestStamp!==null&&$ts<=$latestStamp))continue;
+                    $data=[];if(isset($map['dane_json']))$data=json_decode($row[$map['dane_json']]??'',true)?:[];
+                    if(!$data)foreach($map as $key=>$i)$data[$key]=$row[$i]??'';
+                    $data['dateutc']=gmdate('Y-m-d H:i:s',$ts);$latest=$data;$latestStamp=$ts;
+                }
+                flock($fp,LOCK_UN);fclose($fp);
+            }
+            if($latest!==null)mksd_daily_record($latest,$directory,$suffix);
+        } catch(Throwable $e) {error_log('MK daily CSV mirror failed');}
+    });
 }

@@ -41,11 +41,14 @@ if($mksDailyPath)$files[]=$mksDailyBase;
 def patch_receiver(old,suffix):
  s=old.decode('utf-8');tag='// MK daily CSV hook v1'
  if tag in s:return old
- # Only the reviewed storage point after the receiver's existing authentication/validation.
- pattern=r'(\$return\s*=\s*file_put_contents\s*\(\s*\$data_stored\s*,\s*serialize\s*\(\s*\$_REQUEST\s*\)\s*\)\s*;)'
- matches=list(re.finditer(pattern,s));assert len(matches)==1 and 'PASSKEY' in s and '$test_mode' in s,'Receiver differs; no replacement attempted'
- hook="\n// MK daily CSV hook v1\nif (isset($test_mode) && $test_mode === false && isset($_POST['PASSKEY'])) {\n    try { require_once __DIR__.'/mk-daily-csv.php';\n    mksd_daily_record($_REQUEST, __DIR__, '"+suffix+"'); } catch (\\Throwable $e) { error_log('MK daily CSV write failed'); }\n}\n"
- s=s[:matches[0].end()]+hook+s[matches[0].end():];return s.encode()
+ # Register a sidecar mirror only; the existing receiver and its auth are untouched.
+ assert 'PASSKEY' in s and s.lstrip('\ufeff').startswith('<?php'),'Not an expected station receiver'
+ pos=s.index('<?php')+len('<?php')
+ strict=re.match(r'\s*declare\s*\(\s*strict_types\s*=\s*1\s*\)\s*;',s[pos:])
+ if strict:pos+=strict.end()
+ hook="\n// MK daily CSV hook v1\nrequire_once __DIR__.'/mk-daily-csv.php';\nmksd_register_monthly_mirror(__DIR__, '"+suffix+"');\n"
+ s=s[:pos]+hook+s[pos:];return s.encode()
+
 def main():
  module=Path('station-daily/daily-cache.php').read_bytes();lint(module)
  with ftplib.FTP(os.environ['FTP_HOST'],os.environ['FTP_USER'],os.environ['FTP_PASS'],timeout=45) as f:
