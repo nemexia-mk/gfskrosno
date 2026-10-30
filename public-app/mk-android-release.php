@@ -1,6 +1,6 @@
 <?php
 /** Plugin Name: Meteo Krosno — aplikacja Android
- * Version: 1.0.0
+ * Version: 1.0.1
  */
 defined('ABSPATH') || exit;
 function mkandroid_release(){return json_decode(file_get_contents(__DIR__.'/mk-android-release.json'),true);}
@@ -40,6 +40,10 @@ JS;
   if(strpos($html,'id="mk-coffee-support"')!==false)$html=preg_replace_callback('~<aside\b[^>]*id="mk-coffee-support"[^>]*>~',fn($m)=>$promo.$m[0],$html,1);
   else $html=preg_replace_callback('~<footer\b~i',fn($m)=>$promo.$m[0],$html,1);
  }
+ $navigation=<<<'JS'
+<script data-no-optimize="1" id="mk-android-nav">document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('.desktop-nav,#mobile-nav').forEach(function(nav){if(nav.querySelector('a[href="/aplikacja/"]'))return;var group=Array.from(nav.querySelectorAll('details')).find(function(d){return d.querySelector('summary')?.textContent.trim()==='O serwisie';});if(!group){var about=nav.querySelector('a[href="/o-nas/"]');if(!about)return;group=document.createElement('details');if(nav.classList.contains('desktop-nav'))group.className='nav-dropdown';group.innerHTML='<summary>O serwisie</summary><div><a href="/o-nas/">O nas</a></div>';about.replaceWith(group);}var a=document.createElement('a');a.href='/aplikacja/';a.textContent='Aplikacja Android';if(location.pathname==='/aplikacja/')a.setAttribute('aria-current','page');group.querySelector('div').appendChild(a);});});</script>
+JS;
+ $html=str_replace('</body>',$navigation.'</body>',$html);
  return $html;
 }
 add_action('template_redirect',function(){
@@ -51,4 +55,4 @@ add_action('template_redirect',function(){
  ob_start('mkandroid_html');
 },-1002);
 
-add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_100',time(),'','no'))w3tc_flush_all();},90);
+add_action('init',function(){if(function_exists('w3tc_flush_all')&&add_option('mkandroid_cache_release_101',time(),'','no'))w3tc_flush_all();},90);
