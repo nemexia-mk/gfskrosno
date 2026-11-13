@@ -1,7 +1,7 @@
 name: GFS Krosno – dodatkowe terminy
 on:
   schedule:
-    - cron: '35 3,7,12,16,23 * * *'
+    - cron: '45 1,6,10,16,23 * * *'
   workflow_dispatch:
 permissions:
   contents: read
