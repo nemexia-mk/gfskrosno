@@ -29,6 +29,6 @@ jobs:
       - name: Select shared run
         run: python -c "import gfs_krosno as g,os; d,h=g.select_run(); open(os.environ['GITHUB_ENV'],'a').write('GFS_RUN='+d+h+'\n')"
       - name: Run GFS forecast with separate extended files
-        run: python gfs_krosno.py --run "$GFS_RUN" --max-wait 60
+        run: python gfs_krosno.py --run "$GFS_RUN" --max-wait 100
       - name: Run GFS convection on the same downloaded data
         run: python gfs_conv.py --run "$GFS_RUN" --reuse-gribs
